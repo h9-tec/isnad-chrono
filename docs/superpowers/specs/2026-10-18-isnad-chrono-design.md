@@ -44,7 +44,7 @@ Plain Python, parquet files, no database except the fetch queue. One script per 
 
 ### 2.3 Parsing
 
-- `parse_hadith`: chain = ordered `<a href="/encyclopedia/rawi/p-N">` links inside the chain section, plus the transmission term ("صيغة التحديث") attached to each link; the final link is the compiler. Grade from the "مصادر الحكم" block.
+- Both page types embed their data as JSON in `<script data-page="app" type="application/json">`; parsers read that JSON (`props.hadith.isnad[]` with `slug`, `formula`, `chain_type`; `props.person`, `props.rulings`, `props.criticism`, `props.teachers/students`, `props.biographies`), never the HTML.
 - `parse_rawi`: structured card fields (الاسم, الكنية, النسب, الميلاد, الوفاة, بلد الوفاة, بلد الإقامة, الطبقة, مرتبة ابن حجر, مرتبة الذهبي), "أحكام نقدية خاصة" (إثبات سماع list, الإرسال/التدليس/الاختلاط flags), teachers/students links with IDs, critic statements with their class (تعديل/متوسط/جرح).
 - `dates.py`: Hijri phrase → (year, sd, kind). Handles digits (Arabic-Indic and ASCII), Arabic number words incl. compound ("ست وثمانين ومائة"), ranges/alternatives ("١٠٦ أو ١٠٨"), qualifiers ("نحو", "بعد", "قبل"), and era phrases ("في خلافة عبد الملك" → interval from a caliphate table). Returns `kind ∈ {exact, alt, approx, after, before, era, none}`.
 - Narrative years: every "مات/توفي ... سنة ..." in critic quotes parsed with the same function → `narrative_years[]`.
@@ -71,7 +71,7 @@ All constants in `isnad/constants.py`. Sensitivity reported at 0.05 / 0.1 / 0.2.
 
 ## 4. Validation
 
-Gold negatives: (a) al-Marasil, 1,011 pairs already extracted (student, teacher, relation ∈ {no_sama, mursal, no_idrak, sama}, authority, quote); (b) Jamiʿ al-Tahsil, same prompt over Shamela/OpenITI text; (c) hdith.com irsal flags. Gold positives: Bukhari/Muslim edges whose term is an explicit audition term; عن-edges are excluded from positives. hdith.com `sama_confirmed` pairs are additional positives.
+Gold negatives: (a) al-Marasil, 1,011 pairs already extracted (student, teacher, relation ∈ {no_sama, mursal, no_idrak, sama}, authority, quote); (b) Tuhfat al-Tahsil (Abu Zurʿa al-ʿIraqi, a superset of al-ʿAlaʾiʼs Jamiʿ al-Tahsil), whose entries hdith.com attaches per narrator page, so the student side needs no name resolution; (c) hdith.com irsal flags. Gold positives: Bukhari/Muslim edges whose term is an explicit audition term; عن-edges are excluded from positives. hdith.com `sama_confirmed` pairs are additional positives.
 
 Name resolution for (a) and (b): Arabic name → hdith.com rawi_id via the narrator name index, token-overlap scorer from the spike with first-token bonus; score < 0.6 or tie → ambiguous → excluded from metrics (counted and reported).
 
