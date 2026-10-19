@@ -53,3 +53,16 @@ def test_empty_cache_keeps_schema(tmp_path):
     assert build.build_rawi(root, out / "rawi.parquet") == 0
     df = pd.read_parquet(out / "rawi.parquet")
     assert len(df) == 0 and {"rawi_id", "teachers_ids", "death_year", "birth_kind"} <= set(df.columns)
+
+
+def test_attribute_error_page_is_logged_not_fatal(tmp_path):
+    root = _setup(tmp_path)
+    # valid page data whose `rulings` is a list: parse_rawi raises AttributeError
+    (root / "rawi" / "attr.html").write_text(
+        '<script data-page="app" type="application/json">'
+        '{"component": "x", "props": {"person": {"slug": "p-9", "name": "n"}, "rulings": [1]}}'
+        '</script>')
+    out = tmp_path / "data"
+    assert build.build_rawi(root, out / "rawi.parquet") == 1
+    errs = pd.read_csv(out / "build_errors.csv")
+    assert any(errs["error"].str.startswith("AttributeError"))

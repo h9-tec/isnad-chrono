@@ -72,7 +72,7 @@ def parse_rawi(html: str) -> RawiRecord:
     ]
     years: list[int] = []
     for b in bios:
-        years += narrative_years(b["content"])
+        years += narrative_years(b.get("content") or "")
     for o in raw_ops:
         years += narrative_years(o["statement"])
 
@@ -97,14 +97,15 @@ def parse_rawi(html: str) -> RawiRecord:
         is_companion=bool(p.get("is_companion")),
         teachers=_rel(props.get("teachers")),
         students=_rel(props.get("students")),
-        sama_confirmed=[
+        sama_confirmed=[  # entries missing kind/teacher_slug are skipped, not fatal
             int(s["teacher_slug"][2:])
             for s in rulings.get("sama") or []
-            if s["kind"].startswith("إثبات")
+            if (s.get("kind") or "").startswith("إثبات") and s.get("teacher_slug")
         ],
-        flags=[f["type"] for f in rulings.get("flags") or []],
+        flags=[f["type"] for f in rulings.get("flags") or [] if f.get("type")],
         opinions=opinions,
         narrative_years=years,
-        tuhfa_entries=[b["content"] for b in bios if b["book"] == TUHFA_BOOK],
+        tuhfa_entries=[b["content"] for b in bios
+                       if b.get("book") == TUHFA_BOOK and b.get("content")],
         name_forms=[n["form"] for n in props.get("name_forms") or []],
     )

@@ -11,7 +11,8 @@ from isnad.pageprops import NoPageData
 from isnad.parse_hadith import Edge, edges, parse_hadith
 from isnad.parse_rawi import RawiRecord, parse_rawi
 
-_PARSE_ERRORS = (NoPageData, ValueError, KeyError, json.JSONDecodeError, TypeError, IndexError)
+_PARSE_ERRORS = (NoPageData, ValueError, KeyError, json.JSONDecodeError, TypeError, IndexError,
+                 AttributeError)
 _RAWI_DROP = {"teachers", "students", "opinions", "death", "birth", "tuhfa_entries"}
 
 
