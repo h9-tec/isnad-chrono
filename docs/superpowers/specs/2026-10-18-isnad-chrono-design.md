@@ -53,9 +53,9 @@ Plain Python, parquet files, no database except the fetch queue. One script per 
 
 Per edge T→S, three signals kept separate:
 
-1. **p_meet**: P(S was ≥ A0 = 8 lunar years old before T died). Birth of S known → use it; unknown → imputed as death_S − Age, Age ~ N(68, 14) truncated [20, 100]. Death years carry sd from `kind` (exact 1, alt half-range ≥2, approx 5, after/before +3 ±5, era = interval). `how ∈ {birth_known, birth_imputed, no_dates}`.
+1. **p_meet**: P(S was ≥ A0 = 8 lunar years old before T died). Birth of S known → use it; unknown → imputed as death_S − Age, Age ~ N(68, 14) (bounds [20, 100] defined, not applied in v1). Death years carry sd from `kind` (exact 1, alt half-range ≥2, approx 5, after/before +3 ±5, era = interval). `how ∈ {birth_known, birth_imputed, no_dates, missing_rawi}` (`missing_rawi`: the teacher or student row is absent from rawi.parquet; `no_dates`: both rows present but too undated to score).
 2. **date_conflict**: structured death_year vs narrative_years differ by ≥ 20 → flag on that narrator; any edge touching it is a data error, not a gap.
-3. **sama_evidence**: `confirmed` if T ∈ S.sama_confirmed; `explicit_term` if the link term ∈ {حدثنا, حدثني, أخبرنا, سمعت, …}; `ambiguous_term` for عن/أن/قال; `denied` if a critic denial exists for (S, T) in the gold sets; S-level flags irsal/tadlis.
+3. **sama_evidence**: `confirmed` if T ∈ S.sama_confirmed; `explicit_term` if the link term (the teacher node's formula, i.e. the word printed before T's name) ∈ {حدثنا, حدثني, أخبرنا, سمعت, …}; `ambiguous_term` for عن/أن/قال; `denied` if a critic denial exists for (S, T) in the gold sets; S-level flags irsal/tadlis.
 
 Verdict, first match wins:
 
@@ -63,6 +63,7 @@ Verdict, first match wins:
 |---|---|
 | date_conflict on T or S | data_error |
 | denied by critic | denied_by_critic |
+| p_meet unknown (how ∈ {no_dates, missing_rawi}) | no_dates |
 | p_meet < 0.05 | chronology_gap |
 | p_meet < 0.2 and ambiguous_term and S has irsal or tadlis | suspect |
 | else | ok |

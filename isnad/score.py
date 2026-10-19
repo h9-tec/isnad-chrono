@@ -88,12 +88,13 @@ def sama_evidence(term, teacher_id, student, denials) -> dict:
 
 
 def verdict(p, conflict_t: bool, conflict_s: bool, ev: dict) -> str:
-    if p is None:
-        return "no_dates"
+    """First match wins: data_error > denied_by_critic > no_dates > chronology_gap > suspect > ok."""
     if conflict_t or conflict_s:
         return "data_error"
     if ev["denied"]:
         return "denied_by_critic"
+    if p is None:
+        return "no_dates"
     if p < GAP_THRESHOLD:
         return "chronology_gap"
     if p < SUSPECT_THRESHOLD and ev["ambiguous_term"] and (ev["irsal"] or ev["tadlis"]):
@@ -126,7 +127,12 @@ def score_edges(edges_path, rawi_path, denials: set, out_path=None) -> pd.DataFr
         t, s = recs.get(int(t_id)), recs.get(int(s_id))
         term = None if pd.isna(term) else term
         if t is None or s is None:
-            p, how, ct, cs = None, "no_dates", False, False
+            # Narrator row absent from rawi.parquet: distinct from a present but undated row.
+            p, how = None, "missing_rawi"
+            ct = t is not None and date_conflict(_year(t, "death").year,
+                                                 _nar(t.get("narrative_years")))
+            cs = s is not None and date_conflict(_year(s, "death").year,
+                                                 _nar(s.get("narrative_years")))
             ev = sama_evidence(term, t_id, s if s is not None else {"rawi_id": s_id}, denials)
         else:
             p, how = p_meet(_year(t, "death"), _year(s, "birth") if s else none,

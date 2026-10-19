@@ -29,7 +29,7 @@ Per-edge chronology scores for the teacher-to-student links in the hadith chains
 1. `p_meet` = P(student was at least A0 = 8 lunar years old before the teacher died).
 2. Known student birth is used; otherwise birth = death - Age, with Age ~ N(68, 14). The bounds AGE_MIN=20 and AGE_MAX=100 are defined in the code but not applied in v1 (untruncated normal).
 3. Death years carry an sd by `kind` (exact 1, alt half-range >= 2, approx 5, after/before +3 +-5, era = interval); the normal CDF is computed via erf.
-4. Verdict, first match wins: `no_dates` (p_meet unknown) > `data_error` (date conflict on either narrator) > `denied_by_critic` > `chronology_gap` (p_meet < 0.05) > `suspect` (p_meet < 0.2, ambiguous term, student has irsal/tadlis) > `ok`.
+4. Verdict, first match wins: `data_error` (date conflict on either narrator) > `denied_by_critic` > `no_dates` (p_meet unknown) > `chronology_gap` (p_meet < 0.05) > `suspect` (p_meet < 0.2, ambiguous term, student has irsal/tadlis) > `ok`. `how` is `birth_known`, `birth_imputed`, `no_dates` (both narrators present but too undated to score) or `missing_rawi` (a narrator row is absent from the narrator table).
 5. Sensitivity is reported at thresholds 0.05, 0.1 and 0.2.
 
 ## Limitations

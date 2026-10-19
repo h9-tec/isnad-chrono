@@ -47,11 +47,15 @@ def test_sama_evidence_flags():
 
 
 def test_verdict_order():
+    # R2: data_error > denied_by_critic > no_dates > chronology_gap > suspect > ok
     ev = dict(denied=True, ambiguous_term=True, irsal=True, tadlis=False)
-    assert verdict(None, True, False, ev) == "no_dates"
+    assert verdict(None, True, False, ev) == "data_error"
+    assert verdict(None, False, False, ev) == "denied_by_critic"
     assert verdict(0.01, True, False, ev) == "data_error"
+    assert verdict(0.01, False, True, ev) == "data_error"
     assert verdict(0.01, False, False, ev) == "denied_by_critic"
     ev["denied"] = False
+    assert verdict(None, False, False, ev) == "no_dates"
     assert verdict(0.01, False, False, ev) == "chronology_gap"
     assert verdict(0.1, False, False, ev) == "suspect"
     ev["irsal"] = False
@@ -83,4 +87,34 @@ def test_score_edges_small(tmp_path):
               "ambiguous_term", "denied", "irsal", "tadlis", "verdict", "hadith_id"):
         assert c in out.columns
     assert list(out.verdict) == ["ok", "denied_by_critic", "no_dates"]
-    assert out.how[2] == "no_dates" and pd.isna(out.p_meet[2])
+    assert out.how[2] == "missing_rawi" and pd.isna(out.p_meet[2])
+
+
+def _rawi_row(i, dy, nar=()):
+    return dict(rawi_id=i, death_year=dy, death_sd=1.0, death_kind="exact" if dy else "none",
+                birth_year=None, birth_sd=None, birth_kind="none", narrative_years=list(nar),
+                sama_confirmed=[], flags=[])
+
+
+def test_missing_rawi_vs_no_dates_and_denials_not_hidden(tmp_path):
+    rawi = pd.DataFrame([_rawi_row(1, 197.0), _rawi_row(2, None), _rawi_row(3, 106.0, (186.0,))])
+    ed = pd.DataFrame([
+        # student 2 present but undated -> no_dates
+        dict(teacher_id=1, student_id=2, hadith_id=1, position=0, term="عن", chain_type=None,
+             entry_kind="hadith"),
+        # teacher 99 absent, but denied -> denied_by_critic (not hidden behind no_dates)
+        dict(teacher_id=99, student_id=1, hadith_id=2, position=0, term="عن", chain_type=None,
+             entry_kind="hadith"),
+        # teacher 3 has a date conflict, student 2 undated -> data_error
+        dict(teacher_id=3, student_id=2, hadith_id=3, position=0, term="عن", chain_type=None,
+             entry_kind="hadith"),
+        # teacher 98 absent, not denied -> no_dates with how=missing_rawi
+        dict(teacher_id=98, student_id=1, hadith_id=4, position=0, term="عن", chain_type=None,
+             entry_kind="hadith"),
+    ])
+    ed.to_parquet(tmp_path / "e.parquet")
+    rawi.to_parquet(tmp_path / "r.parquet")
+    out = score_edges(tmp_path / "e.parquet", tmp_path / "r.parquet", {(1, 99)})
+    assert list(out.verdict) == ["no_dates", "denied_by_critic", "data_error", "no_dates"]
+    assert list(out.how) == ["no_dates", "missing_rawi", "no_dates", "missing_rawi"]
+    assert out.p_meet.isna().all()
