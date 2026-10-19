@@ -57,7 +57,16 @@ def main(argv=None) -> None:
     rp.add_argument("--db", dest="report_db", default=DB)
     rp.add_argument("--out-dir", default="data")
     rp.add_argument("--n", type=int, default=50)
+    ep = top.add_parser("export")
+    ep.add_argument("--data-dir", default="data")
+    ep.add_argument("--out", default="release")
     args = ap.parse_args(argv)
+
+    if args.cmd == "export":
+        from isnad import export
+        for name, info in export.run_export(args.data_dir, args.out).items():
+            print(name, info["rows"], "rows")
+        return
 
     if args.cmd == "report":
         import os
