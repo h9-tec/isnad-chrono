@@ -4,7 +4,7 @@ import re
 import sqlite3
 import time
 from collections.abc import Callable, Iterator
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -129,15 +129,16 @@ def _forbidden(url: str) -> bool:
 
 
 class LocalFetcher:
-    """httpx fetcher: <= `rate` requests/s, 3 retries on 5xx and timeouts."""
+    """httpx fetcher: <= `rate` requests/s, 5 retries (2/4/8/16/32 s backoff) on 5xx, timeouts and transport errors."""
 
     def __init__(self, client: httpx.Client, rate: float = 3.0, sleep: Callable = time.sleep,
-                 retries: int = 3, backoff: float = 1.0):
+                 retries: int = 5, backoff: float = 2.0, timeout: float = 120.0):
         self.client = client
         self.interval = 1.0 / rate
         self._sleep = sleep
         self.retries = retries
         self.backoff = backoff
+        self.timeout = timeout
         self._next = 0.0
         self._headers = {"User-Agent": USER_AGENT}
 
@@ -158,7 +159,8 @@ class LocalFetcher:
                 self._sleep(self.backoff * 2 ** (attempt - 1))
             self._throttle()
             try:
-                resp = self.client.request(method, url, headers=self._headers, **kw)
+                resp = self.client.request(method, url, headers=self._headers,
+                                           timeout=self.timeout, **kw)
             except httpx.TransportError:
                 resp = None
                 continue
@@ -186,19 +188,63 @@ class LocalFetcher:
 
 
 class FirecrawlFetcher:
-    def __init__(self, api_key: str, client: httpx.Client, sleep: Callable = time.sleep,
-                 poll_interval: float = 5.0, max_polls: int = 1440, retries: int = 3):
+    def __init__(self, api_key: str, client: httpx.Client, batch_size: int = BATCH_SIZE,
+                 concurrency: int = 1, poll_interval: float = 5.0,
+                 sleep: Callable = time.sleep, max_polls: int = 1440, retries: int = 3):
         self.client = client
         self._sleep = sleep
+        self.batch_size = batch_size
+        self.concurrency = max(1, concurrency)
         self.poll_interval = poll_interval
         self.max_polls = max_polls
         self.retries = retries
         self._headers = {"Authorization": f"Bearer {api_key}"}
 
     def iter_fetch(self, urls: list[str]) -> Iterator[dict[str, tuple[int, str]]]:
-        """Yield the results of each 100-URL batch as soon as it completes."""
-        for i in range(0, len(urls), BATCH_SIZE):
-            yield self._batch(urls[i:i + BATCH_SIZE])
+        """Run up to `concurrency` batch jobs at once, polled round-robin.
+
+        Each job's results are yielded as soon as it completes. After a job fails, no new
+        jobs are submitted; the others are drained and yielded, then the first error is raised.
+        """
+        batches = [urls[i:i + self.batch_size] for i in range(0, len(urls), self.batch_size)]
+        batches.reverse()  # pop() takes the next batch in order
+        inflight: dict[str, int] = {}  # job id -> polls so far
+        error: Exception | None = None
+
+        def fail(e: Exception, job: str | None):
+            nonlocal error
+            if job is not None:
+                e.add_note(f"firecrawl job {job}")
+            error = error or e
+
+        while inflight or (batches and error is None):
+            while batches and len(inflight) < self.concurrency and error is None:
+                try:
+                    inflight[self._submit(batches[-1])] = 0
+                    batches.pop()
+                except Exception as e:
+                    fail(e, None)
+            for job in list(inflight):
+                try:
+                    body = self._get(f"{FIRECRAWL}/{job}")
+                    status = body.get("status")
+                    if status == "completed":
+                        out = self._collect(body)
+                        del inflight[job]
+                        yield out
+                        continue
+                    if status in ("failed", "cancelled"):
+                        raise RuntimeError(f"firecrawl batch {job} {status}")
+                    inflight[job] += 1
+                    if inflight[job] >= self.max_polls:
+                        raise TimeoutError(f"firecrawl batch {job} did not complete")
+                except Exception as e:
+                    inflight.pop(job, None)
+                    fail(e, job)
+            if inflight:
+                self._sleep(self.poll_interval)
+        if error is not None:
+            raise error
 
     def fetch(self, urls: list[str]) -> dict[str, tuple[int, str]]:
         out = {}
@@ -224,21 +270,13 @@ class FirecrawlFetcher:
             resp.raise_for_status()
             return resp.json()
 
-    def _batch(self, urls: list[str]) -> dict[str, tuple[int, str]]:
+    def _submit(self, urls: list[str]) -> str:
         resp = self.client.post(FIRECRAWL, headers=self._headers,
                                 json={"urls": urls, "formats": ["rawHtml"]}, timeout=60)
         resp.raise_for_status()
-        job = resp.json()["id"]
-        poll_url = f"{FIRECRAWL}/{job}"
-        for _ in range(self.max_polls):
-            body = self._get(poll_url)
-            if body.get("status") == "completed":
-                break
-            if body.get("status") in ("failed", "cancelled"):
-                raise RuntimeError(f"firecrawl batch {job} {body['status']}")
-            self._sleep(self.poll_interval)
-        else:
-            raise TimeoutError(f"firecrawl batch {job} did not complete")
+        return resp.json()["id"]
+
+    def _collect(self, body: dict) -> dict[str, tuple[int, str]]:
         out = {}
         while True:
             for d in body.get("data") or []:
@@ -289,6 +327,7 @@ class ProbeError(RuntimeError):
 class Enumerated:
     found: int
     expected: int  # props.stats.hadiths (hadith + passage entries)
+    failed_chapters: list[int] = field(default_factory=list)
 
     @property
     def shortfall(self) -> int:
@@ -310,15 +349,29 @@ def enumerate_book(fetcher: LocalFetcher, queue: Queue, book: str) -> Enumerated
         for g in p.get("hadith_groups") or []:
             collect({"hadiths": g.get("hadiths")})
 
+    failed_chapters: list[int] = []
+
+    def chapter(cid: int) -> dict | None:
+        try:
+            return _props(fetcher, f"{root}?chapter={cid}")
+        except (RuntimeError, httpx.HTTPError):  # one bad page must not abort the book
+            failed_chapters.append(cid)
+            return None
+
     for ch in chapters:
-        page = _props(fetcher, f"{root}?chapter={ch['id']}")
+        page = chapter(ch["id"])
+        if page is None:
+            continue
         collect(page)
         for g in page.get("hadith_groups") or []:
             headings.add(g["id"])
-            collect(_props(fetcher, f"{root}?chapter={g['id']}"))
+            sub = chapter(g["id"])
+            if sub is not None:
+                collect(sub)
 
     # stats["hadiths"] counts hadith and passage entries together (b-2: 7651 + 15 = 7666)
-    if len(found) < stats["hadiths"]:
+    # with failed chapters the listing is knowingly incomplete: skip probing, the re-run redoes it
+    if len(found) < stats["hadiths"] and not failed_chapters:
         bounds = [c["id"] for c in chapters] + [chapters[0]["id"] + stats["entries"]]
         for lo, hi in zip(bounds, bounds[1:]):
             for i in range(lo + 1, hi):
@@ -331,7 +384,7 @@ def enumerate_book(fetcher: LocalFetcher, queue: Queue, book: str) -> Enumerated
                     found[i] = None
                     queue.add(hadith_url(book, i), "hadith", id=i, book=book, entry_kind=None)
 
-    return Enumerated(len(found), stats["hadiths"])
+    return Enumerated(len(found), stats["hadiths"], failed_chapters)
 
 
 # ---------- run ----------

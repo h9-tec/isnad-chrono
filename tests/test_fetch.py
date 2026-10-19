@@ -127,7 +127,7 @@ def test_enumerate_probe_404_reports_shortfall(httpx_mock, tmp_path):
 
 def test_enumerate_probe_failure_raises_but_keeps_rows(httpx_mock, tmp_path):
     book_mocks(httpx_mock, {101, 106})
-    for _ in range(4):
+    for _ in range(6):
         httpx_mock.add_response(method="HEAD", url=PRE + "105", status_code=503)
     q = Queue(tmp_path / "q.sqlite")
     with httpx.Client() as c, pytest.raises(ProbeError):
@@ -138,7 +138,7 @@ def test_enumerate_probe_failure_raises_but_keeps_rows(httpx_mock, tmp_path):
 
 def test_enumerate_probe_timeout_raises(httpx_mock, tmp_path):
     book_mocks(httpx_mock, {101, 106})
-    for _ in range(4):
+    for _ in range(6):
         httpx_mock.add_exception(httpx.ReadTimeout("t"), method="HEAD", url=PRE + "105")
     q = Queue(tmp_path / "q.sqlite")
     with httpx.Client() as c, pytest.raises(ProbeError):
@@ -245,7 +245,7 @@ def test_local_retries_5xx_then_ok(httpx_mock):
 
 
 def test_local_gives_up_on_timeouts(httpx_mock):
-    for _ in range(4):
+    for _ in range(6):
         httpx_mock.add_exception(httpx.ReadTimeout("t"))
     with httpx.Client() as c:
         assert local(c).fetch(["https://hdith.com/a"]) == {}
@@ -347,3 +347,88 @@ def test_local_midrun_exception_keeps_earlier(httpx_mock, tmp_path):
     with httpx.Client() as c, pytest.raises(RuntimeError):
         run_fetch(q, local(c), "rawi", cache_root=tmp_path / "html")
     assert q.counts() == {"ok": 1, "pending": 1}
+
+
+# ---------- task 5b: throughput and robustness ----------
+
+def fcn(c, **kw):
+    return FirecrawlFetcher("K", c, sleep=lambda s: None, **kw)
+
+
+def test_concurrent_batches_yield_in_completion_order(httpx_mock, tmp_path):
+    q, urls = mkq(tmp_path, 250)
+    for j in ("j1", "j2", "j3"):
+        httpx_mock.add_response(method="POST", url=FC, json={"id": j})
+    done = lambda us: {"status": "completed", "data": [doc(u, 200, GOOD) for u in us]}
+    httpx_mock.add_response(url=f"{FC}/j1", json={"status": "scraping"})
+    httpx_mock.add_response(url=f"{FC}/j2", json=done(urls[100:200]))
+    httpx_mock.add_response(url=f"{FC}/j1", json=done(urls[:100]))
+    httpx_mock.add_response(url=f"{FC}/j3", json=done(urls[200:]))
+    order = []
+    orig = q.mark
+    q.mark = lambda url, *a, **k: (order.append(url), orig(url, *a, **k))[0]
+    with httpx.Client() as c:
+        run_fetch(q, fcn(c, concurrency=2), "rawi", cache_root=tmp_path / "html")
+    assert q.counts() == {"ok": 250}
+    assert order[0] == urls[100] and urls[0] in order[100:]
+    posts = [json.loads(r.content)["urls"] for r in httpx_mock.get_requests() if r.method == "POST"]
+    assert [len(p) for p in posts] == [100, 100, 50]
+
+
+def test_concurrent_batch_failure_drains_others(httpx_mock, tmp_path):
+    q, urls = mkq(tmp_path, 250)
+    httpx_mock.add_response(method="POST", url=FC, json={"id": "j1"})
+    httpx_mock.add_response(method="POST", url=FC, json={"id": "j2"})
+    httpx_mock.add_response(url=f"{FC}/j1", json={"status": "failed"})
+    httpx_mock.add_response(url=f"{FC}/j2", json={"status": "completed",
+                            "data": [doc(u, 200, GOOD) for u in urls[100:200]]})
+    with httpx.Client() as c, pytest.raises(RuntimeError, match="j1"):
+        run_fetch(q, fcn(c, concurrency=2), "rawi", cache_root=tmp_path / "html")
+    assert q.counts() == {"ok": 100, "pending": 150}
+    assert q.pending(limit=1) == [urls[0]]
+    assert len([r for r in httpx_mock.get_requests() if r.method == "POST"]) == 2  # no new jobs after failure
+
+
+def test_local_backoff_and_timeout(httpx_mock):
+    for _ in range(6):
+        httpx_mock.add_exception(httpx.ReadTimeout("t"))
+    sleeps = []
+    with httpx.Client() as c:
+        f = LocalFetcher(c, rate=1000.0, sleep=sleeps.append)
+        assert f.get("https://hdith.com/a") is None
+    assert [s for s in sleeps if s >= 1] == [2, 4, 8, 16, 32]
+    assert all(r.extensions["timeout"]["read"] == 120 for r in httpx_mock.get_requests())
+
+
+def test_enumerate_chapter_failure_continues(httpx_mock, tmp_path):
+    item = lambda i: {"id": i, "kind": "hadith"}
+    book = {"book": {"slug": "b-3", "title": "t"},
+            "chapters": [{"id": 10, "t": "a", "count": 1}, {"id": 20, "t": "b", "count": 1},
+                         {"id": 30, "t": "c", "count": 1}],
+            "stats": {"hadiths": 3, "entries": 6}, "hadiths": [], "hadith_groups": []}
+    httpx_mock.add_response(url=f"{BASE}/encyclopedia/book/b-3", text=page_html(book))
+    httpx_mock.add_response(url=f"{BASE}/encyclopedia/book/b-3?chapter=10", text=page_html(dict(book, hadiths=[item(11)])))
+    for _ in range(6):
+        httpx_mock.add_exception(httpx.ReadTimeout("t"), url=f"{BASE}/encyclopedia/book/b-3?chapter=20")
+    httpx_mock.add_response(url=f"{BASE}/encyclopedia/book/b-3?chapter=30", text=page_html(dict(book, hadiths=[item(31)])))
+    q = Queue(tmp_path / "q.sqlite")
+    with httpx.Client() as c:
+        res = enumerate_book(local(c), q, "b-3")
+    assert res.failed_chapters == [20]
+    assert set(q.pending(kind="hadith")) == {f"{BASE}/encyclopedia/book/b-3/h/{i}" for i in (11, 31)}
+    assert not [r for r in httpx_mock.get_requests() if r.method == "HEAD"]
+
+
+def test_books_rerun_failed(httpx_mock, tmp_path, monkeypatch, capsys):
+    from isnad import cli
+    db = tmp_path / "q.sqlite"
+    q = Queue(db)
+    q.mark_book("b-2", "failed")
+    q.mark_book("b-9", "done", 1, 1)
+    calls = []
+    monkeypatch.setattr(fetch, "enumerate_book",
+                        lambda f, queue, book: calls.append(book) or fetch.Enumerated(4, 4))
+    cli.main(["--db", str(db), "fetch", "books", "--book", "b-2"])
+    cli.main(["--db", str(db), "fetch", "books", "--book", "b-9"])
+    assert calls == ["b-2"]
+    assert Queue(db).book_done("b-2")

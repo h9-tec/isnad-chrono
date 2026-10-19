@@ -23,6 +23,8 @@ def main(argv=None) -> None:
     r.add_argument("--kind", choices=["rawi", "hadith"], required=True)
     r.add_argument("--book")
     r.add_argument("--fetcher", choices=["firecrawl", "local"], default="local")
+    r.add_argument("--batch-size", type=int, default=100)
+    r.add_argument("--concurrency", type=int, default=1)
     r.add_argument("--limit", type=int)
     r.add_argument("--include-passages", action="store_true")
     s = f.add_parser("status")
@@ -141,6 +143,11 @@ def main(argv=None) -> None:
                     queue.mark_book(book, "failed")
                     print(book, "FAILED", repr(e), flush=True)
                     continue
+                if res.failed_chapters:  # rows kept; status failed so a re-run retries the book
+                    failed.append((book, f"failed chapters {res.failed_chapters}"))
+                    queue.mark_book(book, "failed", res.found, res.expected)
+                    print(book, "FAILED chapters", res.failed_chapters, flush=True)
+                    continue
                 queue.mark_book(book, "done", res.found, res.expected)
                 warn = f"  WARNING shortfall {res.shortfall}" if res.shortfall else ""
                 print(book, res.found, f"(expected {res.expected})", warn, flush=True)
@@ -148,7 +155,8 @@ def main(argv=None) -> None:
                 print("failed books:", failed)
                 raise SystemExit(1)
         else:
-            fetcher = (fetch.FirecrawlFetcher(fetch.read_api_key(), client)
+            fetcher = (fetch.FirecrawlFetcher(fetch.read_api_key(), client, batch_size=args.batch_size,
+                                            concurrency=args.concurrency)
                        if args.fetcher == "firecrawl" else local)
             fetch.run_fetch(queue, fetcher, args.kind, book=args.book, limit=args.limit,
                             include_passages=args.include_passages)
