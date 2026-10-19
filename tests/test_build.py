@@ -66,3 +66,11 @@ def test_attribute_error_page_is_logged_not_fatal(tmp_path):
     assert build.build_rawi(root, out / "rawi.parquet") == 1
     errs = pd.read_csv(out / "build_errors.csv")
     assert any(errs["error"].str.startswith("AttributeError"))
+
+
+def test_count_parsed_and_built(tmp_path):
+    root = _setup(tmp_path)
+    out = tmp_path / "data"
+    build.build_rawi(root, out / "rawi.parquet")
+    rawi = pd.read_parquet(out / "rawi.parquet")
+    assert "count" in rawi.columns and int(rawi.iloc[0]["count"]) == 197

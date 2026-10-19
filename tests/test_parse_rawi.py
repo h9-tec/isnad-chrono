@@ -42,3 +42,7 @@ def test_rawi_missing_keys_skipped(fx):
     r = parse_rawi(_mutated(fx, damage))
     assert r.sama_confirmed == [4677, 3026, 5917, 5443, 4868, 3799]
     assert r.flags == ["الإرسال"] and len(r.tuhfa_entries) == 1
+
+
+def test_count_parsed(fx):
+    assert parse_rawi(fx("rawi_4494.html")).count == 197

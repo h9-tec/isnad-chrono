@@ -46,6 +46,7 @@ class RawiRecord:
     narrative_years: list[int]
     tuhfa_entries: list[str]
     name_forms: list[str]
+    count: int | None = None  # narration count (person.count)
 
 
 def _rel(items: list[dict] | None) -> list[tuple[int, int | None]]:
@@ -108,4 +109,5 @@ def parse_rawi(html: str) -> RawiRecord:
         tuhfa_entries=[b["content"] for b in bios
                        if b.get("book") == TUHFA_BOOK and b.get("content")],
         name_forms=[n["form"] for n in props.get("name_forms") or []],
+        count=p.get("count"),
     )
