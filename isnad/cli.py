@@ -32,7 +32,25 @@ def main(argv=None) -> None:
     bp.add_argument("--kind", choices=["rawi", "hadith", "all"], default="all")
     bp.add_argument("--cache-root", default="data/raw/html")
     bp.add_argument("--out-dir", default="data")
+    sp = top.add_parser("score")
+    sp.add_argument("--edges", default="data/edges.parquet")
+    sp.add_argument("--rawi", default="data/rawi.parquet")
+    sp.add_argument("--denials", help="parquet/csv with student_id,teacher_id")
+    sp.add_argument("--out", default="data/edge_scores.parquet")
     args = ap.parse_args(argv)
+
+    if args.cmd == "score":
+        import pandas as pd
+
+        from isnad import score
+        den = set()
+        if args.denials:
+            d = (pd.read_csv(args.denials) if args.denials.endswith(".csv")
+                 else pd.read_parquet(args.denials))
+            den = {(int(a), int(b)) for a, b in zip(d["student_id"], d["teacher_id"])}
+        df = score.score_edges(args.edges, args.rawi, den, args.out)
+        print(df["verdict"].value_counts().to_dict())
+        return
 
     if args.cmd == "build":
         out = args.out_dir
