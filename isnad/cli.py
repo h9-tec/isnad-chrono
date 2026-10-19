@@ -37,7 +37,17 @@ def main(argv=None) -> None:
     sp.add_argument("--rawi", default="data/rawi.parquet")
     sp.add_argument("--denials", help="parquet/csv with student_id,teacher_id")
     sp.add_argument("--out", default="data/edge_scores.parquet")
+    gp = top.add_parser("gold")
+    gp.add_argument("--rawi", default="data/rawi.parquet")
+    gp.add_argument("--tuhfa", default="data/tuhfa.parquet")
+    gp.add_argument("--marasil", default="gold/marasil_pairs.json")
+    gp.add_argument("--out-dir", default="data")
     args = ap.parse_args(argv)
+
+    if args.cmd == "gold":
+        from isnad import gold
+        gold.run_gold(args.rawi, args.tuhfa, args.marasil, args.out_dir)
+        return
 
     if args.cmd == "score":
         import pandas as pd
