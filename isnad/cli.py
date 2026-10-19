@@ -50,7 +50,23 @@ def main(argv=None) -> None:
     vp.add_argument("--denials-tuhfa", default="data/denials_tuhfa.parquet")
     vp.add_argument("--out", default="data/metrics.json")
     vp.add_argument("--figures", default="figures")
+    rp = top.add_parser("report")
+    rp.add_argument("--scores", default="data/edge_scores.parquet")
+    rp.add_argument("--rawi", default="data/rawi.parquet")
+    rp.add_argument("--hadith", default="data/hadith.parquet")
+    rp.add_argument("--db", dest="report_db", default=DB)
+    rp.add_argument("--out-dir", default="data")
+    rp.add_argument("--n", type=int, default=50)
     args = ap.parse_args(argv)
+
+    if args.cmd == "report":
+        import os
+
+        from isnad import report
+        db = args.report_db if args.report_db and os.path.exists(args.report_db) else None
+        print(report.run_report_files(args.scores, args.rawi, args.hadith, db,
+                                      args.out_dir, args.n))
+        return
 
     if args.cmd == "validate":
         from isnad import validate
