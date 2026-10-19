@@ -17,6 +17,8 @@ def main(argv=None) -> None:
     f.add_parser("rawis")
     b = f.add_parser("books")
     b.add_argument("--book")
+    b.add_argument("--force", action="store_true", help="re-enumerate books already done")
+    f.add_parser("retry-errors")
     r = f.add_parser("run")
     r.add_argument("--kind", choices=["rawi", "hadith"], required=True)
     r.add_argument("--book")
@@ -29,6 +31,9 @@ def main(argv=None) -> None:
     args = ap.parse_args(argv)
 
     queue = fetch.Queue(args.db)
+    if args.sub == "retry-errors":
+        print(f"reset {queue.reset_errors()} error rows to pending")
+        return
     if args.sub == "status":
         print(queue.counts_by(args.kind, args.book))
         return
@@ -41,8 +46,24 @@ def main(argv=None) -> None:
                 n += 1
             print(f"rawi urls: {n}")
         elif args.sub == "books":
+            failed = []
             for book in [args.book] if args.book else fetch.list_books(local):
-                print(book, fetch.enumerate_book(local, queue, book), flush=True)
+                if queue.book_done(book) and not args.force:
+                    print(book, "done, skipping", flush=True)
+                    continue
+                try:
+                    res = fetch.enumerate_book(local, queue, book)
+                except Exception as e:  # keep going; report at the end
+                    failed.append((book, repr(e)))
+                    queue.mark_book(book, "failed")
+                    print(book, "FAILED", repr(e), flush=True)
+                    continue
+                queue.mark_book(book, "done", res.found, res.expected)
+                warn = f"  WARNING shortfall {res.shortfall}" if res.shortfall else ""
+                print(book, res.found, f"(expected {res.expected})", warn, flush=True)
+            if failed:
+                print("failed books:", failed)
+                raise SystemExit(1)
         else:
             fetcher = (fetch.FirecrawlFetcher(fetch.read_api_key(), client)
                        if args.fetcher == "firecrawl" else local)
