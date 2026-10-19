@@ -51,3 +51,7 @@ def test_number_words(txt, val):
 
 def test_narrative_filters_range():
     assert narrative_years("مات سنة 900 ثم مات سنة 5") == [5]
+
+
+def test_num_beats_era():
+    assert parse_year("في خلافة عبد الملك بن مروان", 86) == Year(86, 1.0, "exact")

@@ -138,12 +138,13 @@ def parse_year(text: str | None, num: int | None = None) -> Year:
             if _BEFORE.search(t):
                 return Year(v - 3, 5.0, "before")
             return Year(v, 1.0, "exact")
+    if num is not None:
+        return Year(num, 1.0, "exact")
+    if text:
         for key in sorted(_ERAS, key=len, reverse=True):
             if key in t:
                 lo, hi = _ERAS[key]
                 return Year((lo + hi) / 2, (hi - lo) / 4, "era")
-    if num is not None:
-        return Year(num, 1.0, "exact")
     return Year(None, None, "none")
 
 
