@@ -213,13 +213,16 @@ def figures(scores, denials_by_class, rawi, hadith, fig_dir) -> None:
             neg = negatives(den, rawi, rel)["p_meet"].dropna()
             fig, ax = plt.subplots(figsize=(6, 4))
             bins = [i / 20 for i in range(21)]
-            ax.hist(pos, bins=bins, alpha=0.6, density=True, label=f"positives (n={len(pos)})")
+            if len(pos):  # density of an empty sample is 0/0
+                ax.hist(pos, bins=bins, alpha=0.6, density=True,
+                        label=f"positives (n={len(pos)})")
             if len(neg):
                 ax.hist(neg, bins=bins, alpha=0.6, density=True,
                         label=f"{source} {rel} (n={len(neg)})")
             ax.set_xlabel("p_meet")
             ax.set_ylabel("density")
-            ax.legend()
+            if len(pos) or len(neg):
+                ax.legend()
             fig.tight_layout()
             fig.savefig(Path(fig_dir) / f"p_meet_{source}_{rel}.png", dpi=150)
             plt.close(fig)
