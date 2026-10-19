@@ -17,7 +17,7 @@ Per-edge chronology scores for the teacher-to-student links in the hadith chains
 
 ## Files
 
-- `edges.parquet`: `teacher_id, student_id, hadith_id, position, term, chain_type, entry_kind`
+- `edges.parquet`: `teacher_id, student_id, hadith_id, position, term, chain_type, entry_kind`. `term` is the transmission formula by which the student received from the teacher (the word printed before the teacher's name in the chain, e.g. حدثنا, عن); it is null only when the source page gives none.
 - `edge_scores.parquet`: per edge keys, `p_meet`, `how`, date-conflict and sama' evidence flags, `verdict`
 - `rawi_dates.parquet`: `rawi_id, generation_num, death_year, death_sd, death_kind, birth_year, birth_sd, birth_kind, is_companion, flags, sama_confirmed, teachers_ids, students_ids`
 - `MANIFEST.json`: row counts and columns per file

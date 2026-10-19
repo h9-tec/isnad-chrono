@@ -70,7 +70,9 @@ def edges(rec: HadithRecord) -> list[Edge]:
             student_id=b.rawi_id,
             hadith_id=rec.hadith_id,
             position=a.position,
-            term=b.formula,
+            # Each node's formula is the word printed before that narrator's name,
+            # i.e. how the next (later) narrator received from them: the teacher's.
+            term=a.formula,
             chain_type=rec.chain_type,
             entry_kind=rec.entry_kind,
         )

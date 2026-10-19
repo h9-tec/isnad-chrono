@@ -24,7 +24,7 @@
 ## Review Focus
 
 1. A narrator page whose `person.death` is a caliphate phrase ("في خلافة عبد الملك بن مروان") and `death_num` is null: `parse_year` must return the caliphate interval, not `kind="none"` (Task 2 test `test_era_phrase`).
-2. A hadith whose `isnad` has the compiler as last link with `formula: null`: the compiler edge must still be emitted with term `None` and the chain must not be truncated (Task 3 test `test_compiler_edge_has_none_term`).
+2. A hadith whose `isnad` has the compiler as last link with `formula: null`: the compiler edge must still be emitted (with the teacher's formula as term, per R1) and the chain must not be truncated (Task 3 test `test_compiler_formula_never_used_as_term`).
 3. A hadith with `chain_type == "معلق"` or `entry_kind == "passage"`: edges emitted but tagged, never counted as sound positives (Task 3 `test_chain_type_kept`, Task 7 `test_positive_set_excludes_muallaq`).
 4. A Firecrawl batch job that returns fewer documents than requested, or a document with `statusCode != 200`: the queue must mark only the delivered 200s as `ok`, the rest stay `pending`/`404` (Task 5 `test_batch_partial_result`).
 5. Two narrators with the same `abbrev` name when resolving al-Marasil names: resolver returns `None` with `ambiguous=True`, never the first match (Task 8 `test_resolver_ambiguous`).
@@ -110,7 +110,7 @@ def test_era_phrase():  # Review Focus 1
 **Interfaces:**
 - Consumes: `pageprops.extract`.
 - Produces: `parse_hadith(html: str) -> HadithRecord` with fields `hadith_id:int, book_slug:str, book_title:str, number:str|None (numbering_harf), entry_kind:str, chain_type:str|None, grading:list[dict] (raw hadith["grading"]), chain:list[ChainLink]`; `ChainLink(rawi_id:int, position:int, formula:str|None, reliability:str|None, dates:str|None, flags:list[str])` where `rawi_id = int(slug[2:])`, `position` 0 = earliest narrator.
-- `edges(rec: HadithRecord) -> list[Edge]`, `Edge(teacher_id:int, student_id:int, hadith_id:int, position:int, term:str|None, chain_type:str|None, entry_kind:str)`; edge i links chain[i] → chain[i+1], `term = chain[i+1].formula` (the student's formula describes how they received from the teacher).
+- `edges(rec: HadithRecord) -> list[Edge]`, `Edge(teacher_id:int, student_id:int, hadith_id:int, position:int, term:str|None, chain_type:str|None, entry_kind:str)`; edge i links chain[i] → chain[i+1], `term = chain[i].formula` (the TEACHER's formula: each node's formula is the word printed before that narrator's name, i.e. how the next, later narrator received from them; corrected in the final-review fix wave R1). The compiler (last node, formula null) is only ever a student, so its None formula is never a term.
 
 - [ ] **Step 1: Write failing tests**
 
@@ -124,11 +124,11 @@ def test_edges_terms(fx):
     e = edges(parse_hadith(fx("hadith_muslim_11563.html")))
     assert len(e) == 6
     assert (e[0].teacher_id, e[0].student_id, e[0].term) == (2651, 3234, "عن")
-    assert (e[3].teacher_id, e[3].student_id, e[3].term) == (2779, 6792, "حدثنا")
+    assert (e[3].teacher_id, e[3].student_id, e[3].term) == (2779, 6792, "عن")  # R1: teacher formula
 
-def test_compiler_edge_has_none_term(fx):  # Review Focus 2
+def test_compiler_formula_never_used_as_term(fx):  # Review Focus 2
     e = edges(parse_hadith(fx("hadith_muslim_11563.html")))
-    assert (e[-1].teacher_id, e[-1].student_id, e[-1].term) == (3889, 6116, None)
+    assert (e[-1].teacher_id, e[-1].student_id, e[-1].term) == (3889, 6116, "حدثنا")  # R1
 
 def test_no_chain_passage(fx):
     r = parse_hadith(fx("hadith_muslim_11558_nochain.html"))
