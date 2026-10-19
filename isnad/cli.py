@@ -57,6 +57,7 @@ def main(argv=None) -> None:
         if args.denials:
             d = (pd.read_csv(args.denials) if args.denials.endswith(".csv")
                  else pd.read_parquet(args.denials))
+            d = d.dropna(subset=["student_id", "teacher_id"])
             den = {(int(a), int(b)) for a, b in zip(d["student_id"], d["teacher_id"])}
         df = score.score_edges(args.edges, args.rawi, den, args.out)
         print(df["verdict"].value_counts().to_dict())

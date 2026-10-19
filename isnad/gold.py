@@ -173,13 +173,17 @@ def tuhfa_denials(tuhfa_path, index: NameIndex, runner=claude_p, batch_size=40,
     return df[cols]
 
 
+def _valid(df: pd.DataFrame) -> pd.DataFrame:
+    return df[df["resolved"] & ~df["ambiguous"] & df["relation"].isin(DENY)
+              & df["student_id"].notna() & df["teacher_id"].notna()]
+
+
 def denial_set(dfs) -> set[tuple[int, int]]:
     out = set()
     for df in dfs:
         if df is None or len(df) == 0:
             continue
-        m = df[df["resolved"] & ~df["ambiguous"] & df["relation"].isin(DENY)
-               & df["student_id"].notna() & df["teacher_id"].notna()]
+        m = _valid(df)
         out |= {(int(a), int(b)) for a, b in zip(m["student_id"], m["teacher_id"])}
     return out
 
@@ -193,10 +197,15 @@ def run_gold(rawi, tuhfa, marasil, out_dir, runner=claude_p) -> None:
     t.to_parquet(out / "denials_tuhfa.parquet")
     parts = []
     for name, df in (("marasil", m), ("tuhfa", t)):
-        d = df[["student_id", "teacher_id", "relation", "resolved", "ambiguous"]].copy()
-        d["source"] = name
-        parts.append(d)
         print(name, "resolved", int((df["resolved"] & ~df["ambiguous"]).sum()),
               "ambiguous", int(df["ambiguous"].sum()),
               "unresolved", int((~df["resolved"] & ~df["ambiguous"]).sum()))
-    pd.concat(parts, ignore_index=True).to_parquet(out / "denials.parquet")
+        if len(df):
+            v = _valid(df)[["student_id", "teacher_id", "relation"]].copy()
+            v["source"] = name
+            parts.append(v)
+    cols = ["student_id", "teacher_id", "relation", "source"]
+    u = pd.concat(parts, ignore_index=True) if parts else pd.DataFrame(columns=cols)
+    u["student_id"] = u["student_id"].astype("int64")
+    u["teacher_id"] = u["teacher_id"].astype("int64")
+    u[cols].to_parquet(out / "denials.parquet")

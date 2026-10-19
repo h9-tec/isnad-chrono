@@ -75,3 +75,28 @@ def test_tuhfa_fake_runner(tmp_path):
                                 "resolved", "ambiguous"]
     assert len(df) == 2 and df["resolved"].all()
     assert gold.denial_set([df]) == {(1, 2)}
+
+
+def test_run_gold_denials_only_valid(tmp_path):
+    rawi = _rawi(tmp_path, [_row(1, "إبراهيم النخعي", "إبراهيم النخعي"),
+                            _row(2, "أبو عبد الله الجدلي", "أبو عبد الله الجدلي"),
+                            _row(3, "شعبة", "شعبة"),
+                            _row(4, "محمد سيرين الأول", "محمد سيرين"),
+                            _row(5, "محمد سيرين الثاني", "محمد سيرين")])
+    t = tmp_path / "t.parquet"
+    pd.DataFrame([{"rawi_id": 1, "content": "x"}]).to_parquet(t)
+    m = tmp_path / "m.json"
+    m.write_text(json.dumps([
+        {"student": "إبراهيم النخعي", "teacher": "أبو عبد الله الجدلي", "relation": "no_sama",
+         "authority": "a", "quote": "q"},
+        {"student": "إبراهيم النخعي", "teacher": "شعبة", "relation": "sama",
+         "authority": "a", "quote": "q"},
+        {"student": "إبراهيم النخعي", "teacher": "مجهول تماما", "relation": "mursal",
+         "authority": "a", "quote": "q"},
+        {"student": "إبراهيم النخعي", "teacher": "محمد سيرين", "relation": "mursal",
+         "authority": "a", "quote": "q"}], ensure_ascii=False), encoding="utf-8")
+    gold.run_gold(rawi, t, m, tmp_path, runner=lambda p: "")
+    d = pd.read_parquet(tmp_path / "denials.parquet")
+    assert [(int(a), int(b)) for a, b in zip(d.student_id, d.teacher_id)] == [(1, 2)]
+    assert str(d.student_id.dtype) == "int64" and str(d.teacher_id.dtype) == "int64"
+    assert len(pd.read_parquet(tmp_path / "denials_marasil.parquet")) == 4
