@@ -84,7 +84,11 @@ def main(argv=None) -> None:
         m = validate.run_validate(args.scores, args.rawi, args.hadith,
                                   {"marasil": args.denials_marasil, "tuhfa": args.denials_tuhfa},
                                   args.out, args.figures)
-        print({k: v for k, v in m.items() if k != "verdict_counts_by_book"})
+        print({k: m[k] for k in ("n_positives", "n_positives_scored", "false_flag_rate")})
+        for src, rels in m["negatives"].items():
+            for rel, c in rels.items():
+                print(src, rel, {k: c[k] for k in ("n", "auroc", "recall@0.05", "n_in_corpus",
+                                                   "text_recall_in_corpus_excl_denial")})
         return
 
     if args.cmd == "gold":
