@@ -42,7 +42,23 @@ def main(argv=None) -> None:
     gp.add_argument("--tuhfa", default="data/tuhfa.parquet")
     gp.add_argument("--marasil", default="gold/marasil_pairs.json")
     gp.add_argument("--out-dir", default="data")
+    vp = top.add_parser("validate")
+    vp.add_argument("--scores", default="data/edge_scores.parquet")
+    vp.add_argument("--rawi", default="data/rawi.parquet")
+    vp.add_argument("--hadith", default="data/hadith.parquet")
+    vp.add_argument("--denials-marasil", default="data/denials_marasil.parquet")
+    vp.add_argument("--denials-tuhfa", default="data/denials_tuhfa.parquet")
+    vp.add_argument("--out", default="data/metrics.json")
+    vp.add_argument("--figures", default="figures")
     args = ap.parse_args(argv)
+
+    if args.cmd == "validate":
+        from isnad import validate
+        m = validate.run_validate(args.scores, args.rawi, args.hadith,
+                                  {"marasil": args.denials_marasil, "tuhfa": args.denials_tuhfa},
+                                  args.out, args.figures)
+        print({k: v for k, v in m.items() if k != "verdict_counts_by_book"})
+        return
 
     if args.cmd == "gold":
         from isnad import gold
