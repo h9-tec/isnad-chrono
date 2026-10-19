@@ -55,3 +55,13 @@ def test_narrative_filters_range():
 
 def test_num_beats_era():
     assert parse_year("في خلافة عبد الملك بن مروان", 86) == Year(86, 1.0, "exact")
+
+
+def test_stray_number_word_is_not_a_year():
+    y = parse_year("في خلافة عثمان وله ست سنين")
+    assert y.kind == "era"
+    assert parse_year("أحد").kind == "none"
+
+
+def test_narrative_ignores_age():
+    assert narrative_years("مات وله ست وثلاثون سنة وثمانية أشهر") == []

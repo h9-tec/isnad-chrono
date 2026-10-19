@@ -41,7 +41,7 @@ def _norm(s: str) -> str:
 _ERAS = {_norm(k): v for k, v in CALIPHATES.items()}
 
 _UNITS = {
-    "واحد": 1, "احد": 1, "احدي": 1, "اثنين": 2, "اثنتين": 2, "اثنان": 2, "اثنا": 2,
+    "واحد": 1, "احدي": 1, "اثنين": 2, "اثنتين": 2, "اثنان": 2, "اثنا": 2,
     "اثني": 2, "ثنتين": 2, "ثلاث": 3, "ثلاثه": 3, "اربع": 4, "اربعه": 4,
     "خمس": 5, "خمسه": 5, "ست": 6, "سته": 6, "سبع": 7, "سبعه": 7,
     "ثمان": 8, "ثماني": 8, "ثمانيه": 8, "تسع": 9, "تسعه": 9,
@@ -87,21 +87,27 @@ def _word_value(tok: str) -> int | None:
     return None
 
 
+_DURATION = {_norm(w) for w in ("سنين", "سنة", "سنوات", "شهر", "أشهر", "اشهر", "شهرا", "يوما", "أيام", "ايام")}
+
+
 def _sum_words(tokens: list[str]) -> int | None:
-    total, prev_unit, found = 0, None, False
+    """Sum the first contiguous run of number words; None if absent or it is a duration."""
+    total, prev_unit, started = 0, None, False
     for raw in tokens:
         tok = _clean(raw)
         v = _word_value(tok)
         if v is None:
+            if started:
+                return None if tok in _DURATION else total
             continue
-        found = True
+        started = True
         if tok in _HUNDRED and prev_unit is not None and 3 <= prev_unit <= 9:
             total += prev_unit * 99  # "ثلاث مائة": unit already added once, make it unit*100
             prev_unit = None
             continue
         prev_unit = v if tok in _UNITS else None
         total += v
-    return total if found else None
+    return total if started else None
 
 
 def _value(segment: str) -> int | None:
@@ -151,10 +157,16 @@ def parse_year(text: str | None, num: int | None = None) -> Year:
 _TRIGGER = re.compile(r"(?:مات|توفي|وفاته|هلك)[^.]{0,40}?" + _bound("سنه"))
 
 
+_AGE = re.compile(r"(?<!\S)(?:وله|وهو|ابن|عمره)(?!\S)")
+
+
 def narrative_years(text: str) -> list[int]:
     t = _norm(text)
     out = []
     for m in _TRIGGER.finditer(t):
+        gap = t[:m.end()].split()
+        if _AGE.search(m.group()) or (len(gap) > 1 and _word_value(_clean(gap[-2])) is not None):
+            continue  # age phrase ("وله ست وثلاثون سنة"), not a death year
         toks = []
         for raw in t[m.end():].split():
             tok = _clean(raw)
