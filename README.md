@@ -1,6 +1,6 @@
 # isnad-chrono
 
-Scores every teacher-to-student link in the hadith chains (isnads) of hdith.com's corpus by the probability that the two narrators could have met, using narrator death and birth years with uncertainty, combined with textual sama' (audition) evidence. The scores are validated against classical critics' denials of contact (al-Marasil, Tuhfat al-Tahsil). The method is per-edge, explainable and uses no training.
+Scores every teacher-to-student link in the hadith chains (isnads) of hdith.com's corpus by the probability that the two narrators could have met, using narrator death and birth years with uncertainty, combined with textual sama' (audition) evidence. The scores are evaluated against classical critics' denials of contact (al-Marasil, Tuhfat al-Tahsil). The method is per-edge, explainable and uses no training.
 
 ## Setup
 
@@ -10,7 +10,7 @@ mkdir -p ~/.config/isnad-chrono
 echo 'FIRECRAWL_API_KEY=<your key>' > ~/.config/isnad-chrono/.env
 ```
 
-The key is only needed for the Firecrawl fetcher. Python 3.12.
+The key is only needed for the Firecrawl fetcher. Python >= 3.12.
 
 ## Pipeline
 
@@ -41,7 +41,7 @@ export --data-dir data --out release         # release/ for the dataset
 
 ## Licensing
 
-Code: MIT. The released dataset contains derived numbers only (IDs, years, flags, scores, verdicts). No hdith.com text, names, or matn is redistributed; the export enforces a column denylist. hdith.com is the data source and is cited. Its license is unstated, so the site owners are to be contacted before the dataset is published.
+Code: MIT (see `LICENSE`). The released dataset is licensed CC-BY-4.0 and contains derived numbers only (IDs, years, flags, scores, verdicts). No hdith.com text, names, or matn is redistributed; the export enforces a column denylist. hdith.com is the data source and is cited. The license of hdith.com itself is unstated, so the site owners are to be contacted before the dataset is published.
 
 ## Contact
 
