@@ -432,3 +432,235 @@ def test_books_rerun_failed(httpx_mock, tmp_path, monkeypatch, capsys):
     cli.main(["--db", str(db), "fetch", "books", "--book", "b-9"])
     assert calls == ["b-2"]
     assert Queue(db).book_done("b-2")
+
+
+# ---------- final-review R4: credit safety ----------
+
+def done_body(us):
+    return {"status": "completed", "data": [doc(u, 200, GOOD) for u in us]}
+
+
+def test_multi_round_drain_after_failure(httpx_mock, tmp_path):
+    q, urls = mkq(tmp_path, 250)
+    httpx_mock.add_response(method="POST", url=FC, json={"id": "j1"})
+    httpx_mock.add_response(method="POST", url=FC, json={"id": "j2"})
+    httpx_mock.add_response(url=f"{FC}/j1", json={"status": "failed"})
+    httpx_mock.add_response(url=f"{FC}/j2", json={"status": "scraping"})  # survives a round
+    httpx_mock.add_response(url=f"{FC}/j2", json=done_body(urls[100:200]))
+    with httpx.Client() as c, pytest.raises(RuntimeError, match="j1"):
+        run_fetch(q, fcn(c, concurrency=2), "rawi", cache_root=tmp_path / "html")
+    assert q.counts() == {"ok": 100, "pending": 150}
+    assert len([r for r in httpx_mock.get_requests() if r.method == "POST"]) == 2
+    st = {j["job_id"]: j["status"] for j in q.jobs()}
+    assert st == {"j1": "failed", "j2": "persisted"}
+
+
+def test_submit_failure_with_jobs_in_flight(httpx_mock, tmp_path):
+    q, urls = mkq(tmp_path, 250)
+    httpx_mock.add_response(method="POST", url=FC, json={"id": "j1"})
+    httpx_mock.add_response(method="POST", url=FC, status_code=402)
+    httpx_mock.add_response(url=f"{FC}/j1", json={"status": "scraping"})
+    httpx_mock.add_response(url=f"{FC}/j1", json=done_body(urls[:100]))
+    with httpx.Client() as c, pytest.raises(httpx.HTTPStatusError):
+        run_fetch(q, fcn(c, concurrency=2), "rawi", cache_root=tmp_path / "html")
+    assert q.counts() == {"ok": 100, "pending": 150}
+    assert len([r for r in httpx_mock.get_requests() if r.method == "POST"]) == 2  # 402 not retried
+
+
+def test_max_polls_with_concurrency(httpx_mock, tmp_path):
+    q, urls = mkq(tmp_path, 200)
+    httpx_mock.add_response(method="POST", url=FC, json={"id": "j1"})
+    httpx_mock.add_response(method="POST", url=FC, json={"id": "j2"})
+    httpx_mock.add_response(url=f"{FC}/j1", json={"status": "scraping"}, is_reusable=True)
+    httpx_mock.add_response(url=f"{FC}/j2", json={"status": "scraping"})
+    httpx_mock.add_response(url=f"{FC}/j2", json=done_body(urls[100:]))
+    with httpx.Client() as c, pytest.raises(TimeoutError, match="j1"):
+        run_fetch(q, fcn(c, concurrency=2, max_polls=3), "rawi", cache_root=tmp_path / "html")
+    assert q.counts() == {"ok": 100, "pending": 100}
+    assert {j["job_id"]: j["status"] for j in q.jobs()}["j1"] == "timeout"
+
+
+def test_job_ledger_and_stdout(httpx_mock, tmp_path, capsys):
+    q, urls = mkq(tmp_path, 150)
+    httpx_mock.add_response(method="POST", url=FC, json={"id": "j1"})
+    httpx_mock.add_response(method="POST", url=FC, json={"id": "j2"})
+    httpx_mock.add_response(url=f"{FC}/j1", json=done_body(urls[:100]))
+    httpx_mock.add_response(url=f"{FC}/j2", json=done_body(urls[100:]))
+    with httpx.Client() as c:
+        run_fetch(q, fc(c), "rawi", cache_root=tmp_path / "html")
+    jobs = Queue(tmp_path / "q.sqlite").jobs()
+    assert [(j["job_id"], j["kind"], j["n"], j["first_url"], j["last_url"], j["status"]) for j in jobs] == [
+        ("j1", "rawi", 100, urls[0], urls[99], "persisted"),
+        ("j2", "rawi", 50, urls[100], urls[149], "persisted")]
+    assert all(j["submitted_at"] for j in jobs)
+    out = capsys.readouterr().out
+    assert f"firecrawl job j1 submitted: n=100 first={urls[0]} last={urls[99]}" in out
+
+
+def test_job_recorded_before_polling_survives_crash(httpx_mock, tmp_path):
+    q, urls = mkq(tmp_path, 2)
+    httpx_mock.add_response(method="POST", url=FC, json={"id": "j1"})
+    httpx_mock.add_exception(KeyboardInterrupt(), url=f"{FC}/j1")
+    with httpx.Client() as c, pytest.raises(KeyboardInterrupt):
+        run_fetch(q, fc(c), "rawi", cache_root=tmp_path / "html")
+    assert [(j["job_id"], j["status"]) for j in Queue(tmp_path / "q.sqlite").jobs()] == [("j1", "submitted")]
+
+
+def test_recover_job_persists_results(httpx_mock, tmp_path, capsys):
+    q, urls = mkq(tmp_path, 3)
+    q.record_job("j9", "rawi", urls)
+    q.mark(urls[2], "ok", path="x")
+    httpx_mock.add_response(url=f"{FC}/j9", json={"status": "completed", "data": [
+        doc(urls[0], 200, GOOD), doc(urls[1], 404), doc(urls[2], 200, GOOD),
+        doc("https://hdith.com/elsewhere", 200, GOOD)]})
+    with httpx.Client() as c:
+        st = fetch.recover_job(q, fc(c), "j9", cache_root=tmp_path / "html")
+    assert st.unmatched == 1
+    assert q.counts() == {"ok": 2, "404": 1}
+    assert (tmp_path / "html" / "rawi" / "1.html").read_text() == GOOD
+    assert not (tmp_path / "html" / "rawi" / "3.html").exists()  # already ok: untouched
+    assert q.job("j9")["status"] == "recovered"
+
+
+def test_recover_unknown_job_needs_kind(httpx_mock, tmp_path):
+    q, urls = mkq(tmp_path, 1)
+    with httpx.Client() as c:
+        with pytest.raises(ValueError):
+            fetch.recover_job(q, fc(c), "nope", cache_root=tmp_path / "html")
+        httpx_mock.add_response(url=f"{FC}/nope", json={"status": "completed", "data": [doc(urls[0], 200, GOOD)]})
+        fetch.recover_job(q, fc(c), "nope", kind="rawi", cache_root=tmp_path / "html")
+    assert q.counts() == {"ok": 1}
+    assert q.job("nope")["status"] == "recovered"
+
+
+def test_recover_refuses_incomplete_job(httpx_mock, tmp_path):
+    q, urls = mkq(tmp_path, 1)
+    q.record_job("j", "rawi", urls)
+    httpx_mock.add_response(url=f"{FC}/j", json={"status": "scraping"})
+    with httpx.Client() as c, pytest.raises(RuntimeError, match="scraping"):
+        fetch.recover_job(q, fc(c), "j", cache_root=tmp_path / "html")
+    assert q.counts() == {"pending": 1}
+
+
+def test_cli_jobs_and_recover(httpx_mock, tmp_path, monkeypatch, capsys):
+    from isnad import cli
+    q, urls = mkq(tmp_path, 1)
+    q.record_job("j5", "rawi", urls)
+    cli.main(["--db", str(tmp_path / "q.sqlite"), "fetch", "jobs"])
+    assert "j5 rawi 1 submitted" in capsys.readouterr().out
+    monkeypatch.setattr(fetch, "read_api_key", lambda: "K")
+    seen = {}
+    monkeypatch.setattr(fetch, "recover_job",
+                        lambda queue, f, job, kind=None: seen.update(job=job, kind=kind))
+    cli.main(["--db", str(tmp_path / "q.sqlite"), "fetch", "recover", "--job", "j5"])
+    assert seen == {"job": "j5", "kind": None}
+
+
+def test_missing_urls_are_transient_and_unmatched_counted(httpx_mock, tmp_path, capsys):
+    q, urls = mkq(tmp_path, 3)
+    httpx_mock.add_response(method="POST", url=FC, json={"id": "j"})
+    httpx_mock.add_response(url=f"{FC}/j", json={"status": "completed", "data": [
+        doc(urls[0], 200, GOOD), doc(urls[1] + "/", 200, GOOD)]})
+    with httpx.Client() as c:
+        st = run_fetch(q, fc(c), "rawi", cache_root=tmp_path / "html")
+    assert (st.missing, st.unmatched) == (2, 1)
+    assert q.counts() == {"ok": 1, "pending": 2}
+    att = dict(q._db.execute("SELECT url, attempts FROM pages"))
+    assert att[urls[1]] == 1 and att[urls[2]] == 1 and att[urls[0]] == 0
+    assert "2 requested URLs missing" in capsys.readouterr().out
+
+
+def test_local_timeout_counts_as_transient(httpx_mock, tmp_path):
+    q, urls = mkq(tmp_path, 1)
+    for _ in range(6):
+        httpx_mock.add_exception(httpx.ReadTimeout("t"), url=urls[0])
+    with httpx.Client() as c:
+        run_fetch(q, local(c), "rawi", cache_root=tmp_path / "html")
+    assert dict(q._db.execute("SELECT url, attempts FROM pages"))[urls[0]] == 1
+    assert q.counts() == {"pending": 1}
+
+
+def test_iter_fetch_yields_requested_urls(httpx_mock):
+    httpx_mock.add_response(method="POST", url=FC, json={"id": "j"})
+    httpx_mock.add_response(url=f"{FC}/j", json={"status": "completed", "data": [doc("a", 200, GOOD)]})
+    with httpx.Client() as c:
+        assert list(fc(c).iter_fetch(["a", "b"])) == [(["a", "b"], {"a": (200, GOOD)})]
+
+
+def test_submit_retries_429_and_5xx_and_transport(httpx_mock):
+    httpx_mock.add_response(method="POST", url=FC, status_code=429)
+    httpx_mock.add_response(method="POST", url=FC, status_code=503)
+    httpx_mock.add_exception(httpx.ConnectError("x"), method="POST", url=FC)
+    httpx_mock.add_response(method="POST", url=FC, json={"id": "j"})
+    httpx_mock.add_response(url=f"{FC}/j", json={"status": "completed", "data": [doc("a", 200, GOOD)]})
+    sleeps = []
+    with httpx.Client() as c:
+        f = FirecrawlFetcher("K", c, sleep=sleeps.append, poll_interval=5.0)
+        assert f.fetch(["a"]) == {"a": (200, GOOD)}
+    assert sleeps[:3] == [5.0, 10.0, 20.0]
+
+
+def test_submit_timeout_logged(httpx_mock, capsys):
+    httpx_mock.add_exception(httpx.ReadTimeout("t"), method="POST", url=FC)
+    httpx_mock.add_response(method="POST", url=FC, json={"id": "j"})
+    httpx_mock.add_response(url=f"{FC}/j", json={"status": "completed", "data": [doc("b", 200, GOOD)]})
+    with httpx.Client() as c:
+        fc(c).fetch(["a", "b"])
+    out = capsys.readouterr().out
+    assert "POST timed out; a job may exist: n=2 first=a last=b" in out
+
+
+def test_submit_gives_up_after_retries(httpx_mock):
+    for _ in range(4):
+        httpx_mock.add_response(method="POST", url=FC, status_code=429)
+    with httpx.Client() as c, pytest.raises(httpx.HTTPStatusError):
+        fc(c).fetch(["a"])
+
+
+def test_queue_wal_and_timeout(tmp_path):
+    q = Queue(tmp_path / "q.sqlite")
+    assert q._db.execute("PRAGMA journal_mode").fetchone()[0] == "wal"
+    assert q._db.execute("PRAGMA busy_timeout").fetchone()[0] == 60000
+
+
+def test_queue_tolerates_wal_pragma_failure(tmp_path):
+    import sqlite3
+    db = tmp_path / "q.sqlite"
+    import threading
+    # an old-mode (rollback journal) database held by a concurrent connection
+    holder = sqlite3.connect(db, isolation_level=None, check_same_thread=False)
+    holder.execute(fetch._SCHEMA)
+    holder.execute("BEGIN")
+    holder.execute("SELECT * FROM pages").fetchall()  # shared lock blocks the mode switch
+    t = threading.Timer(0.3, lambda: holder.execute("COMMIT"))  # released shortly after
+    t.start()
+    q = Queue(db)  # pragma fails fast and is ignored; schema writes wait on busy_timeout
+    t.join()
+    assert q._db.execute("PRAGMA journal_mode").fetchone()[0] == "delete"
+    q.add("u", "rawi", id=1)
+    assert q.counts() == {"pending": 1}
+
+
+def test_cli_refuses_firecrawl_hadith_without_book_or_limit(tmp_path, monkeypatch, capsys):
+    from isnad import cli
+    db = tmp_path / "q.sqlite"
+    q = Queue(db)
+    q.add("h1", "hadith", id=1, book="b-1")
+    q.add("h2", "hadith", id=2, book="b-2")
+    monkeypatch.setattr(fetch, "read_api_key", lambda: pytest.fail("must not reach the fetcher"))
+    with pytest.raises(SystemExit) as e:
+        cli.main(["--db", str(db), "fetch", "run", "--kind", "hadith", "--fetcher", "firecrawl"])
+    assert e.value.code == 2
+    assert "2 hadith pages pending" in capsys.readouterr().out
+
+
+def test_cli_allows_firecrawl_hadith_with_book(tmp_path, monkeypatch):
+    from isnad import cli
+    db = tmp_path / "q.sqlite"
+    monkeypatch.setattr(fetch, "read_api_key", lambda: "K")
+    seen = {}
+    monkeypatch.setattr(fetch, "run_fetch", lambda queue, f, kind, **kw: seen.update(kind=kind, **kw))
+    cli.main(["--db", str(db), "fetch", "run", "--kind", "hadith", "--fetcher", "firecrawl", "--book", "b-1"])
+    assert seen["book"] == "b-1"
+    cli.main(["--db", str(db), "fetch", "run", "--kind", "hadith", "--fetcher", "firecrawl", "--limit", "5"])
+    assert seen["limit"] == 5

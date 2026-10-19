@@ -20,8 +20,11 @@ Run in this order. All commands are `uv run python -m isnad.cli <command>`.
 fetch rawis                                  # enumerate narrator URLs from the sitemap
 fetch books [--book b-2]                     # enumerate hadith URLs per book
 fetch run --kind rawi   --fetcher firecrawl  # fetch narrator pages (raw HTML cached)
-fetch run --kind hadith --fetcher firecrawl  # or --fetcher local (<= 3 req/s)
+fetch run --kind hadith --fetcher firecrawl --book b-1   # Stage 2: one book at a time, b-1 ... b-6
+fetch run --kind hadith --fetcher local                  # or the local crawler (<= 3 req/s)
 fetch status [--kind K] [--book B]           # queue counts
+fetch jobs                                   # Firecrawl job ledger (id, kind, n, status, first/last URL)
+fetch recover --job <id> [--kind K]          # persist the results of an already-paid job
 build                                        # parse cache -> data/*.parquet
 gold                                         # gold negatives/positives from marasil + tuhfa
 score --denials data/denials.parquet         # p_meet, sama evidence, verdicts
@@ -29,6 +32,10 @@ validate                                     # data/metrics.json, figures/
 report                                       # weak_edges.csv, date_errors.csv
 export --data-dir data --out release         # release/ for the dataset
 ```
+
+Stage 2 (the Six Books) must run per book: `fetch run --kind hadith --fetcher firecrawl --book b-1`, then `b-2` ... `b-6`. Without `--book` or `--limit`, a Firecrawl hadith run refuses to start (prints the pending count, exits 2), so a single command cannot spend credits on all 245 books.
+
+Every submitted Firecrawl job is printed (job id, count, first/last URL) and stored in the `jobs` table of `data/queue.sqlite` before polling. If a run dies after paying for a job, `fetch jobs` lists it and `fetch recover --job <id>` persists its results. A POST that times out may still have created a job; it is logged with the batch's first/last URL.
 
 ## Data layout
 

@@ -1,4 +1,4 @@
-"""CLI: python -m isnad.cli fetch <rawis|books|run|status>."""
+"""CLI: python -m isnad.cli <fetch|build|gold|score|validate|report|export> ..."""
 
 import argparse
 
@@ -27,6 +27,10 @@ def main(argv=None) -> None:
     r.add_argument("--concurrency", type=int, default=1)
     r.add_argument("--limit", type=int)
     r.add_argument("--include-passages", action="store_true")
+    f.add_parser("jobs", help="list submitted Firecrawl jobs from the ledger")
+    rc = f.add_parser("recover", help="persist the results of an existing Firecrawl job")
+    rc.add_argument("--job", required=True)
+    rc.add_argument("--kind", choices=["rawi", "hadith"], help="needed if the job is not in the ledger")
     s = f.add_parser("status")
     s.add_argument("--kind")
     s.add_argument("--book")
@@ -126,6 +130,17 @@ def main(argv=None) -> None:
     if args.sub == "status":
         print(queue.counts_by(args.kind, args.book))
         return
+    if args.sub == "jobs":
+        for j in queue.jobs():
+            print(j["job_id"], j["kind"], j["n"], j["status"], j["submitted_at"],
+                  j["first_url"], j["last_url"])
+        return
+    if (args.sub == "run" and args.fetcher == "firecrawl" and args.kind == "hadith"
+            and args.book is None and args.limit is None):
+        n = len(queue.pending(kind="hadith", include_passages=args.include_passages))
+        print(f"refusing: {n} hadith pages pending across all books; run Stage 2 per book "
+              "with --book b-N (or cap the run with --limit N)")
+        raise SystemExit(2)
     with httpx.Client(timeout=30) as client:
         local = fetch.LocalFetcher(client)
         if args.sub == "rawis":
@@ -158,9 +173,13 @@ def main(argv=None) -> None:
             if failed:
                 print("failed books:", failed)
                 raise SystemExit(1)
+        elif args.sub == "recover":
+            fc = fetch.FirecrawlFetcher(fetch.read_api_key(), client)
+            fetch.recover_job(queue, fc, args.job, kind=args.kind)
         else:
             fetcher = (fetch.FirecrawlFetcher(fetch.read_api_key(), client, batch_size=args.batch_size,
-                                            concurrency=args.concurrency)
+                                            concurrency=args.concurrency,
+                                            ledger=queue.ledger(args.kind))
                        if args.fetcher == "firecrawl" else local)
             fetch.run_fetch(queue, fetcher, args.kind, book=args.book, limit=args.limit,
                             include_passages=args.include_passages)

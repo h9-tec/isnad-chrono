@@ -31,16 +31,48 @@ CREATE TABLE IF NOT EXISTS books (
     book TEXT PRIMARY KEY, status TEXT, found INTEGER, expected INTEGER
 )
 """
+_JOBS = """
+CREATE TABLE IF NOT EXISTS jobs (
+    job_id TEXT PRIMARY KEY, kind TEXT, n INTEGER, first_url TEXT, last_url TEXT,
+    submitted_at TEXT, status TEXT
+)
+"""
 MAX_ATTEMPTS = 3
+DB_TIMEOUT = 60
+
+
+def _now() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+class JobLedger:
+    """Records every submitted Firecrawl job (the only handle on credits already spent)."""
+
+    def __init__(self, queue: "Queue", kind: str):
+        self.queue, self.kind = queue, kind
+
+    def job_submitted(self, job_id: str, urls: list[str]) -> None:
+        self.queue.record_job(job_id, self.kind, urls)
+
+    def job_status(self, job_id: str, status: str) -> None:
+        self.queue.set_job_status(job_id, status)
 
 
 class Queue:
     def __init__(self, db_path):
         db_path = Path(db_path)
         db_path.parent.mkdir(parents=True, exist_ok=True)
-        self._db = sqlite3.connect(db_path)
+        self._db = sqlite3.connect(db_path, timeout=DB_TIMEOUT)
+        try:  # don't wait on the busy handler: a concurrent old-mode connection may hold the file
+            self._db.execute("PRAGMA busy_timeout = 0")
+            self._db.execute("PRAGMA journal_mode=WAL")
+        except sqlite3.OperationalError:
+            pass
+        finally:
+            self._db.execute(f"PRAGMA busy_timeout = {DB_TIMEOUT * 1000}")
         self._db.execute(_SCHEMA)
         self._db.execute(_BOOKS)
+        self._db.execute(_JOBS)
         cols = {r[1] for r in self._db.execute("PRAGMA table_info(pages)")}
         if "attempts" not in cols:  # migrate databases created before retries existed
             self._db.execute("ALTER TABLE pages ADD COLUMN attempts INTEGER NOT NULL DEFAULT 0")
@@ -56,6 +88,29 @@ class Queue:
         status = "error" if n >= MAX_ATTEMPTS else "pending"
         self.mark(url, status, http_status=http_status)
         return status
+
+    def ledger(self, kind: str) -> JobLedger:
+        return JobLedger(self, kind)
+
+    def record_job(self, job_id, kind, urls, status="submitted") -> None:
+        self._db.execute(
+            "INSERT OR REPLACE INTO jobs (job_id, kind, n, first_url, last_url, submitted_at, status)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (job_id, kind, len(urls), urls[0] if urls else None, urls[-1] if urls else None,
+             _now(), status))
+        self._db.commit()
+
+    def set_job_status(self, job_id, status) -> None:
+        self._db.execute("UPDATE jobs SET status = ? WHERE job_id = ?", (status, job_id))
+        self._db.commit()
+
+    def jobs(self) -> list[dict]:
+        cur = self._db.execute("SELECT * FROM jobs ORDER BY submitted_at, rowid")
+        names = [c[0] for c in cur.description]
+        return [dict(zip(names, r)) for r in cur]
+
+    def job(self, job_id) -> dict | None:
+        return next((j for j in self.jobs() if j["job_id"] == job_id), None)
 
     def reset_errors(self) -> int:
         cur = self._db.execute(
@@ -100,13 +155,16 @@ class Queue:
     def mark(self, url, status, path=None, http_status=None):
         self._db.execute(
             "UPDATE pages SET status = ?, path = ?, http_status = ?, fetched_at = ? WHERE url = ?",
-            (status, str(path) if path else None, http_status,
-             datetime.now(timezone.utc).isoformat(), url),
+            (status, str(path) if path else None, http_status, _now(), url),
         )
         self._db.commit()
 
-    def info(self, url) -> tuple[str, int]:
+    def info(self, url) -> tuple[str, int] | None:
         return self._db.execute("SELECT kind, id FROM pages WHERE url = ?", (url,)).fetchone()
+
+    def status(self, url) -> str | None:
+        row = self._db.execute("SELECT status FROM pages WHERE url = ?", (url,)).fetchone()
+        return row[0] if row else None
 
     def counts(self) -> dict[str, int]:
         return dict(self._db.execute("SELECT status, COUNT(*) FROM pages GROUP BY status"))
@@ -174,15 +232,18 @@ class LocalFetcher:
     def head(self, url: str) -> httpx.Response | None:
         return self.request("HEAD", url)
 
-    def iter_fetch(self, urls: list[str]) -> Iterator[dict[str, tuple[int, str]]]:
-        """Yield one {url: (status, html)} per URL so callers can persist incrementally."""
+    def iter_fetch(self, urls: list[str]) -> Iterator[tuple[list[str], dict[str, tuple[int, str]]]]:
+        """Yield ([url], {url: (status, html)}) per URL so callers can persist incrementally.
+
+        The result dict is empty when every attempt timed out (or the URL is forbidden).
+        """
         for url in urls:
             resp = self.get(url)
-            yield {url: (resp.status_code, resp.text)} if resp is not None else {}
+            yield [url], ({url: (resp.status_code, resp.text)} if resp is not None else {})
 
     def fetch(self, urls: list[str]) -> dict[str, tuple[int, str]]:
         out = {}
-        for chunk in self.iter_fetch(urls):
+        for _, chunk in self.iter_fetch(urls):
             out.update(chunk)
         return out
 
@@ -190,8 +251,11 @@ class LocalFetcher:
 class FirecrawlFetcher:
     def __init__(self, api_key: str, client: httpx.Client, batch_size: int = BATCH_SIZE,
                  concurrency: int = 1, poll_interval: float = 5.0,
-                 sleep: Callable = time.sleep, max_polls: int = 1440, retries: int = 3):
+                 sleep: Callable = time.sleep, max_polls: int = 1440, retries: int = 3,
+                 ledger: JobLedger | None = None, log: Callable = print):
         self.client = client
+        self.ledger = ledger  # job_submitted(job_id, urls) / job_status(job_id, status)
+        self._log = log
         self._sleep = sleep
         self.batch_size = batch_size
         self.concurrency = max(1, concurrency)
@@ -200,15 +264,21 @@ class FirecrawlFetcher:
         self.retries = retries
         self._headers = {"Authorization": f"Bearer {api_key}"}
 
-    def iter_fetch(self, urls: list[str]) -> Iterator[dict[str, tuple[int, str]]]:
+    def _status(self, job: str, status: str) -> None:
+        if self.ledger is not None:
+            self.ledger.job_status(job, status)
+
+    def iter_fetch(self, urls: list[str]) -> Iterator[tuple[list[str], dict[str, tuple[int, str]]]]:
         """Run up to `concurrency` batch jobs at once, polled round-robin.
 
-        Each job's results are yielded as soon as it completes. After a job fails, no new
-        jobs are submitted; the others are drained and yielded, then the first error is raised.
+        Yields (requested_urls, results) for each job as soon as it completes. After a job
+        fails, no new jobs are submitted; the others are drained and yielded, then the first
+        error is raised. Job statuses go to the ledger: submitted -> collected (results fetched)
+        -> persisted (the consumer finished with the chunk), or failed/timeout/error.
         """
         batches = [urls[i:i + self.batch_size] for i in range(0, len(urls), self.batch_size)]
         batches.reverse()  # pop() takes the next batch in order
-        inflight: dict[str, int] = {}  # job id -> polls so far
+        inflight: dict[str, list] = {}  # job id -> [polls so far, requested urls]
         error: Exception | None = None
 
         def fail(e: Exception, job: str | None):
@@ -220,7 +290,7 @@ class FirecrawlFetcher:
         while inflight or (batches and error is None):
             while batches and len(inflight) < self.concurrency and error is None:
                 try:
-                    inflight[self._submit(batches[-1])] = 0
+                    inflight[self._submit(batches[-1])] = [0, batches[-1]]
                     batches.pop()
                 except Exception as e:
                     fail(e, None)
@@ -230,16 +300,23 @@ class FirecrawlFetcher:
                     status = body.get("status")
                     if status == "completed":
                         out = self._collect(body)
-                        del inflight[job]
-                        yield out
+                        requested = inflight.pop(job)[1]
+                        self._status(job, "collected")
+                        yield requested, out
+                        self._status(job, "persisted")
                         continue
                     if status in ("failed", "cancelled"):
+                        inflight.pop(job)
+                        self._status(job, status)
                         raise RuntimeError(f"firecrawl batch {job} {status}")
-                    inflight[job] += 1
-                    if inflight[job] >= self.max_polls:
+                    inflight[job][0] += 1
+                    if inflight[job][0] >= self.max_polls:
+                        inflight.pop(job)
+                        self._status(job, "timeout")
                         raise TimeoutError(f"firecrawl batch {job} did not complete")
                 except Exception as e:
-                    inflight.pop(job, None)
+                    if inflight.pop(job, None) is not None:  # HTTP error while polling
+                        self._status(job, "error")
                     fail(e, job)
             if inflight:
                 self._sleep(self.poll_interval)
@@ -248,18 +325,28 @@ class FirecrawlFetcher:
 
     def fetch(self, urls: list[str]) -> dict[str, tuple[int, str]]:
         out = {}
-        for chunk in self.iter_fetch(urls):
+        for _, chunk in self.iter_fetch(urls):
             out.update(chunk)
         return out
 
-    def _get(self, url: str) -> dict:
-        """GET with retry on 429/5xx/network errors: the job id is the only handle on spent credits."""
+    def recover(self, job_id: str) -> dict[str, tuple[int, str]]:
+        """GET an existing job and return its results; raises if it is not completed."""
+        body = self._get(f"{FIRECRAWL}/{job_id}")
+        status = body.get("status")
+        if status != "completed":
+            raise RuntimeError(f"firecrawl job {job_id} is {status!r}, not completed")
+        return self._collect(body)
+
+    def _request(self, method: str, url: str, on_timeout: Callable | None = None, **kw) -> dict:
+        """Request with retry on 429/5xx/transport errors (backoff poll_interval * 2**k)."""
         for attempt in range(self.retries + 1):
             if attempt:
                 self._sleep(self.poll_interval * 2 ** (attempt - 1))
             try:
-                resp = self.client.get(url, headers=self._headers, timeout=60)
-            except httpx.TransportError:
+                resp = self.client.request(method, url, headers=self._headers, timeout=60, **kw)
+            except httpx.TransportError as e:
+                if on_timeout is not None and isinstance(e, httpx.TimeoutException):
+                    on_timeout()
                 if attempt == self.retries:
                     raise
                 continue
@@ -270,11 +357,25 @@ class FirecrawlFetcher:
             resp.raise_for_status()
             return resp.json()
 
+    def _get(self, url: str) -> dict:
+        """GET with retry: the job id is the only handle on spent credits."""
+        return self._request("GET", url)
+
     def _submit(self, urls: list[str]) -> str:
-        resp = self.client.post(FIRECRAWL, headers=self._headers,
-                                json={"urls": urls, "formats": ["rawHtml"]}, timeout=60)
-        resp.raise_for_status()
-        return resp.json()["id"]
+        """POST a batch job with retry (a 429 creates no job). A timed-out POST may still have
+        created a job, so it is logged with the batch's first/last URL before retrying."""
+        def timed_out():
+            self._log(f"firecrawl POST timed out; a job may exist: n={len(urls)} "
+                      f"first={urls[0]} last={urls[-1]}", flush=True)
+
+        body = self._request("POST", FIRECRAWL, on_timeout=timed_out,
+                             json={"urls": urls, "formats": ["rawHtml"]})
+        job = body["id"]
+        self._log(f"firecrawl job {job} submitted: n={len(urls)} first={urls[0]} last={urls[-1]}",
+                  flush=True)
+        if self.ledger is not None:
+            self.ledger.job_submitted(job, urls)
+        return job
 
     def _collect(self, body: dict) -> dict[str, tuple[int, str]]:
         out = {}
@@ -389,10 +490,33 @@ def enumerate_book(fetcher: LocalFetcher, queue: Queue, book: str) -> Enumerated
 
 # ---------- run ----------
 
+@dataclass
+class FetchStats:
+    missing: int = 0  # requested but absent from the results (counted as a transient failure)
+    unmatched: int = 0  # results whose sourceURL matched no requested/queued URL (discarded)
+
+
+def _persist(queue: Queue, root: Path, url: str, status, html) -> None:
+    path = root / f"{queue.info(url)[1]}.html"
+    if status == 200:
+        if _PAGE_RE.search(html or ""):
+            path.write_text(html, encoding="utf-8")
+            queue.mark(url, "ok", path=path, http_status=status)
+        else:  # empty body / challenge page: never cache it as ok
+            queue.mark(url, "error", http_status=status)
+    elif status == 404:
+        queue.mark(url, "404", http_status=status)
+    elif status is None or status == 429 or status >= 500:
+        queue.record_transient(url, status)
+    else:
+        queue.mark(url, "error", http_status=status)
+
+
 def run_fetch(queue: Queue, fetcher, kind: str, book=None, limit=None,
-              cache_root="data/raw/html", include_passages=False) -> None:
+              cache_root="data/raw/html", include_passages=False, log: Callable = print) -> FetchStats:
     root = Path(cache_root) / kind
     root.mkdir(parents=True, exist_ok=True)
+    stats = FetchStats()
     todo = []
     for url in queue.pending(kind=kind, book=book, limit=limit, include_passages=include_passages):
         path = root / f"{queue.info(url)[1]}.html"
@@ -401,25 +525,58 @@ def run_fetch(queue: Queue, fetcher, kind: str, book=None, limit=None,
         else:
             todo.append(url)
     if not todo:
-        return
+        return stats
+    if getattr(fetcher, "ledger", False) is None:
+        fetcher.ledger = queue.ledger(kind)
     pending = set(todo)
-    for chunk in fetcher.iter_fetch(todo):  # persist after every batch / URL
-        for url, (status, html) in chunk.items():
-            if url not in pending:
-                continue
-            path = root / f"{queue.info(url)[1]}.html"
-            if status == 200:
-                if _PAGE_RE.search(html or ""):
-                    path.write_text(html, encoding="utf-8")
-                    queue.mark(url, "ok", path=path, http_status=status)
-                else:  # empty body / challenge page: never cache it as ok
-                    queue.mark(url, "error", http_status=status)
-            elif status == 404:
-                queue.mark(url, "404", http_status=status)
-            elif status is None or status == 429 or status >= 500:
-                queue.record_transient(url, status)
-            else:
-                queue.mark(url, "error", http_status=status)
+    try:
+        for requested, chunk in fetcher.iter_fetch(todo):  # persist after every batch / URL
+            for url, (status, html) in chunk.items():
+                if url not in pending:
+                    stats.unmatched += 1
+                    continue
+                _persist(queue, root, url, status, html)
+            for url in requested:
+                if url in pending and url not in chunk:
+                    stats.missing += 1
+                    queue.record_transient(url, None)
+    finally:
+        if stats.missing or stats.unmatched:
+            log(f"fetch: {stats.missing} requested URLs missing from results (retried later), "
+                f"{stats.unmatched} unmatched sourceURLs discarded", flush=True)
+    return stats
+
+
+def recover_job(queue: Queue, fetcher: "FirecrawlFetcher", job_id: str, kind: str | None = None,
+                cache_root="data/raw/html", log: Callable = print) -> FetchStats:
+    """Persist the results of an already-paid Firecrawl job through the normal path.
+
+    URLs already `ok` are left alone; results for URLs not in the queue are discarded and counted.
+    """
+    row = queue.job(job_id)
+    kind = kind or (row["kind"] if row else None)
+    if kind is None:
+        raise ValueError(f"job {job_id} is not in the ledger; pass --kind")
+    root = Path(cache_root) / kind
+    root.mkdir(parents=True, exist_ok=True)
+    stats = FetchStats()
+    persisted = 0
+    for url, (status, html) in fetcher.recover(job_id).items():
+        info = queue.info(url)
+        if info is None or info[0] != kind:
+            stats.unmatched += 1
+            continue
+        if queue.status(url) == "ok":
+            continue
+        _persist(queue, root, url, status, html)
+        persisted += 1
+    if row is None:
+        queue.record_job(job_id, kind, [], status="recovered")
+    else:
+        queue.set_job_status(job_id, "recovered")
+    log(f"recovered job {job_id}: {persisted} results persisted, "
+        f"{stats.unmatched} unmatched sourceURLs discarded", flush=True)
+    return stats
 
 
 def read_api_key(env_path=ENV_PATH) -> str:
