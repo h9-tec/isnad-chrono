@@ -59,7 +59,7 @@ def test_metrics_keys(tmp_path):
     assert m["marasil"]["auroc"] == 1.0
     assert m["n_positives"] == 2
     assert set(m["false_flag_rate"]) == {"@0.05", "@0.1", "@0.2"}
-    assert m["verdict_counts_by_book"]["b-2"]["ok"] == 2
+    assert m["verdict_counts_by_book"]["b-2"] == {"ok": 1, "no_dates": 1}
     assert set(m["coverage"]) == {"how", "death_kind"}
     json.dumps(m, allow_nan=False)
 
