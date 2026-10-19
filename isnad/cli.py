@@ -1,0 +1,55 @@
+"""CLI: python -m isnad.cli fetch <rawis|books|run|status>."""
+
+import argparse
+
+import httpx
+
+from isnad import fetch
+
+DB = "data/queue.sqlite"
+
+
+def main(argv=None) -> None:
+    ap = argparse.ArgumentParser(prog="isnad")
+    ap.add_argument("--db", default=DB)
+    top = ap.add_subparsers(dest="cmd", required=True)
+    f = top.add_parser("fetch").add_subparsers(dest="sub", required=True)
+    f.add_parser("rawis")
+    b = f.add_parser("books")
+    b.add_argument("--book")
+    r = f.add_parser("run")
+    r.add_argument("--kind", choices=["rawi", "hadith"], required=True)
+    r.add_argument("--book")
+    r.add_argument("--fetcher", choices=["firecrawl", "local"], default="local")
+    r.add_argument("--limit", type=int)
+    r.add_argument("--include-passages", action="store_true")
+    s = f.add_parser("status")
+    s.add_argument("--kind")
+    s.add_argument("--book")
+    args = ap.parse_args(argv)
+
+    queue = fetch.Queue(args.db)
+    if args.sub == "status":
+        print(queue.counts_by(args.kind, args.book))
+        return
+    with httpx.Client(timeout=30) as client:
+        local = fetch.LocalFetcher(client)
+        if args.sub == "rawis":
+            n = 0
+            for url, id in fetch.load_rawi_sitemap(local):
+                queue.add(url, "rawi", id=id)
+                n += 1
+            print(f"rawi urls: {n}")
+        elif args.sub == "books":
+            for book in [args.book] if args.book else fetch.list_books(local):
+                print(book, fetch.enumerate_book(local, queue, book), flush=True)
+        else:
+            fetcher = (fetch.FirecrawlFetcher(fetch.read_api_key(), client)
+                       if args.fetcher == "firecrawl" else local)
+            fetch.run_fetch(queue, fetcher, args.kind, book=args.book, limit=args.limit,
+                            include_passages=args.include_passages)
+            print(queue.counts_by(args.kind, args.book))
+
+
+if __name__ == "__main__":
+    main()
