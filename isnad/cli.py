@@ -39,7 +39,8 @@ def main(argv=None) -> None:
         if args.kind in ("rawi", "all"):
             build.build_rawi(args.cache_root, f"{out}/rawi.parquet")
         if args.kind in ("hadith", "all"):
-            build.build_hadith(args.cache_root, f"{out}/hadith.parquet", f"{out}/edges.parquet")
+            build.build_hadith(args.cache_root, f"{out}/hadith.parquet", f"{out}/edges.parquet",
+                               reset=args.kind == "hadith")
         return
 
     queue = fetch.Queue(args.db)

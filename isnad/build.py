@@ -9,7 +9,7 @@ import pandas as pd
 
 from isnad.pageprops import NoPageData
 from isnad.parse_hadith import Edge, edges, parse_hadith
-from isnad.parse_rawi import parse_rawi
+from isnad.parse_rawi import RawiRecord, parse_rawi
 
 _PARSE_ERRORS = (NoPageData, ValueError, KeyError, json.JSONDecodeError, TypeError, IndexError)
 _RAWI_DROP = {"teachers", "students", "opinions", "death", "birth", "tuhfa_entries"}
@@ -24,6 +24,19 @@ def _log_error(errors_path: Path, path: Path, exc: Exception) -> None:
         w.writerow([str(path), f"{type(exc).__name__}: {exc}"])
 
 
+def _rawi_columns() -> list[str]:
+    cols = [f.name for f in dataclasses.fields(RawiRecord) if f.name not in _RAWI_DROP]
+    cols += ["teachers_ids", "students_ids"]
+    for name in ("death", "birth"):
+        cols += [f"{name}_year", f"{name}_sd", f"{name}_kind"]
+    return cols
+
+
+def _reset(errors: Path) -> None:
+    errors.parent.mkdir(parents=True, exist_ok=True)
+    errors.unlink(missing_ok=True)
+
+
 def _pages(cache_root, kind: str):
     d = Path(cache_root) / kind
     return sorted(d.glob("*.html")) if d.is_dir() else []
@@ -34,9 +47,11 @@ def _write(rows: list[dict], columns: list[str], path: Path) -> None:
     pd.DataFrame(rows, columns=columns).to_parquet(path, index=False)
 
 
-def build_rawi(cache_root, out="data/rawi.parquet") -> int:
+def build_rawi(cache_root, out="data/rawi.parquet", reset: bool = True) -> int:
     out = Path(out)
     errors = out.parent / "build_errors.csv"
+    if reset:
+        _reset(errors)
     rawi, ops, tuhfa = [], [], []
     n_err = 0
     for p in _pages(cache_root, "rawi"):
@@ -58,7 +73,7 @@ def build_rawi(cache_root, out="data/rawi.parquet") -> int:
                         "scholar_death": o.scholar_death, "classification": o.classification,
                         "bucket": o.bucket, "statement": o.statement})
         tuhfa.extend({"rawi_id": r.rawi_id, "content": c} for c in r.tuhfa_entries)
-    _write(rawi, list(rawi[0]) if rawi else [], out)
+    _write(rawi, _rawi_columns(), out)
     _write(ops, ["rawi_id", "scholar", "scholar_id", "scholar_death", "classification",
                  "bucket", "statement"], out.parent / "opinions.parquet")
     _write(tuhfa, ["rawi_id", "content"], out.parent / "tuhfa.parquet")
@@ -66,9 +81,12 @@ def build_rawi(cache_root, out="data/rawi.parquet") -> int:
     return len(rawi)
 
 
-def build_hadith(cache_root, out_h="data/hadith.parquet", out_e="data/edges.parquet") -> tuple[int, int]:
+def build_hadith(cache_root, out_h="data/hadith.parquet", out_e="data/edges.parquet",
+                 reset: bool = True) -> tuple[int, int]:
     out_h, out_e = Path(out_h), Path(out_e)
     errors = out_h.parent / "build_errors.csv"
+    if reset:
+        _reset(errors)
     hs, es = [], []
     n_err = 0
     for p in _pages(cache_root, "hadith"):
