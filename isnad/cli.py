@@ -112,6 +112,7 @@ def main(argv=None) -> None:
             den = {(int(a), int(b)) for a, b in zip(d["student_id"], d["teacher_id"])}
         df = score.score_edges(args.edges, args.rawi, den, args.out)
         print(df["verdict"].value_counts().to_dict())
+        print(score.format_term_table(score.term_table(df)))
         return
 
     if args.cmd == "build":

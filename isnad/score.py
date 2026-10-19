@@ -156,3 +156,25 @@ def score_edges(edges_path, rawi_path, denials: set, out_path=None) -> pd.DataFr
         Path(out_path).parent.mkdir(parents=True, exist_ok=True)
         out.to_parquet(out_path, index=False)
     return out
+
+
+def term_table(scores: pd.DataFrame, top: int = 20) -> dict:
+    """Edge-row counts per term class, and the most frequent unclassified raw terms."""
+    explicit = scores["explicit_term"].fillna(False).astype(bool)
+    ambiguous = scores["ambiguous_term"].fillna(False).astype(bool)
+    other = ~explicit & ~ambiguous
+    vc = scores.loc[other, "term"].fillna("<none>").value_counts()
+    ranked = sorted(vc.items(), key=lambda kv: (-kv[1], str(kv[0])))[:top]
+    return {"explicit": int(explicit.sum()), "ambiguous": int(ambiguous.sum()),
+            "unclassified": int(other.sum()),
+            "top_unclassified": [(str(k), int(v)) for k, v in ranked]}
+
+
+def format_term_table(t: dict) -> str:
+    lines = ["term class (edge rows):",
+             f"  explicit {t['explicit']}", f"  ambiguous {t['ambiguous']}",
+             f"  unclassified {t['unclassified']}"]
+    if t["top_unclassified"]:
+        lines.append(f"top {len(t['top_unclassified'])} unclassified terms:")
+        lines += [f"  {term}\t{n}" for term, n in t["top_unclassified"]]
+    return "\n".join(lines)

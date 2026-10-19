@@ -118,3 +118,28 @@ def test_missing_rawi_vs_no_dates_and_denials_not_hidden(tmp_path):
     assert list(out.verdict) == ["no_dates", "denied_by_critic", "data_error", "no_dates"]
     assert list(out.how) == ["no_dates", "missing_rawi", "no_dates", "missing_rawi"]
     assert out.p_meet.isna().all()
+
+
+def test_term_table():
+    from isnad.score import format_term_table, term_table
+    sc = pd.DataFrame({"term": ["حدثنا", "عن", "عن", None, "فيما قرأ", "فيما قرأ", "كتب إلي"],
+                       "explicit_term": [True, False, False, False, False, False, False],
+                       "ambiguous_term": [False, True, True, True, False, False, False]})
+    t = term_table(sc)
+    assert (t["explicit"], t["ambiguous"], t["unclassified"]) == (1, 3, 3)
+    assert t["top_unclassified"] == [("فيما قرأ", 2), ("كتب إلي", 1)]
+    text = format_term_table(t)
+    assert "unclassified 3" in text and "فيما قرأ\t2" in text
+
+
+def test_score_cli_prints_term_table(tmp_path, capsys):
+    from isnad import cli
+    rawi = pd.DataFrame([_rawi_row(1, 197.0), _rawi_row(2, 219.0)])
+    ed = pd.DataFrame([dict(teacher_id=1, student_id=2, hadith_id=1, position=0, term="كتب إلي",
+                            chain_type=None, entry_kind="hadith")])
+    ed.to_parquet(tmp_path / "e.parquet")
+    rawi.to_parquet(tmp_path / "r.parquet")
+    cli.main(["score", "--edges", str(tmp_path / "e.parquet"), "--rawi", str(tmp_path / "r.parquet"),
+              "--out", str(tmp_path / "o.parquet")])
+    out = capsys.readouterr().out
+    assert "unclassified 1" in out and "كتب إلي\t1" in out
