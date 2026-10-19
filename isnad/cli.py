@@ -4,7 +4,7 @@ import argparse
 
 import httpx
 
-from isnad import fetch
+from isnad import build, fetch
 
 DB = "data/queue.sqlite"
 
@@ -28,7 +28,19 @@ def main(argv=None) -> None:
     s = f.add_parser("status")
     s.add_argument("--kind")
     s.add_argument("--book")
+    bp = top.add_parser("build")
+    bp.add_argument("--kind", choices=["rawi", "hadith", "all"], default="all")
+    bp.add_argument("--cache-root", default="data/raw/html")
+    bp.add_argument("--out-dir", default="data")
     args = ap.parse_args(argv)
+
+    if args.cmd == "build":
+        out = args.out_dir
+        if args.kind in ("rawi", "all"):
+            build.build_rawi(args.cache_root, f"{out}/rawi.parquet")
+        if args.kind in ("hadith", "all"):
+            build.build_hadith(args.cache_root, f"{out}/hadith.parquet", f"{out}/edges.parquet")
+        return
 
     queue = fetch.Queue(args.db)
     if args.sub == "retry-errors":
