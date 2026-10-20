@@ -1,4 +1,4 @@
-"""CLI: python -m isnad.cli <fetch|build|chains|groups|dating|tree|gold|score|validate|report|export> ..."""
+"""CLI: python -m isnad.cli <fetch|build|chains|groups|dating|tree|edits|gold|score|validate|report|export> ..."""
 
 import argparse
 
@@ -90,6 +90,12 @@ def main(argv=None) -> None:
     tp.add_argument("--dates", default="data/rawi_dates_inferred.parquet")
     tp.add_argument("--shawahid", default="data/shawahid.parquet")
     tp.add_argument("--out-dir", default="data")
+    xp = top.add_parser("edits", help="wording-change attribution and generation edit rates")
+    xp.add_argument("--segments", default="data/segments.parquet")
+    xp.add_argument("--chains", default="data/chains.parquet")
+    xp.add_argument("--occurrences", default="data/occurrences.parquet")
+    xp.add_argument("--out", default="data/edits.parquet")
+    xp.add_argument("--rates", default="data/edit_rates.parquet")
     ep = top.add_parser("export")
     ep.add_argument("--data-dir", default="data")
     ep.add_argument("--out", default="release")
@@ -136,6 +142,11 @@ def main(argv=None) -> None:
         from isnad import tree
         tree.run_tree(args.chains, args.occurrences, args.groups, args.dates, args.out_dir,
                       shawahid_path=args.shawahid)
+        return
+
+    if args.cmd == "edits":
+        from isnad import edits
+        edits.run_edits(args.segments, args.chains, args.occurrences, args.out, args.rates)
         return
 
     if args.cmd == "chains":
