@@ -4,8 +4,8 @@ import math
 import pandas as pd
 
 from isnad.constants import (
-    A0, AMBIGUOUS_TERMS, CONFLICT_YEARS, EXPLICIT_TERMS, GAP_THRESHOLD, MU_AGE, SD_AGE,
-    SUSPECT_THRESHOLD,
+    A0, AMBIGUOUS_EXACT, AMBIGUOUS_PREFIXES, CONFLICT_YEARS, EXPLICIT_EXACT, EXPLICIT_PREFIXES,
+    GAP_THRESHOLD, MU_AGE, SD_AGE, SUSPECT_THRESHOLD,
 )
 from isnad.dates import Year, _norm
 
@@ -20,8 +20,22 @@ def _strip(term) -> str | None:
     return t or None
 
 
-_EXPLICIT = {_strip(t) for t in EXPLICIT_TERMS}
-_AMBIGUOUS = {_strip(t) for t in AMBIGUOUS_TERMS}
+_EXPLICIT_EXACT = {_strip(t) for t in EXPLICIT_EXACT}
+_AMBIGUOUS_EXACT = {_strip(t) for t in AMBIGUOUS_EXACT}
+_EXPLICIT_PREFIXES = tuple(_strip(t) for t in EXPLICIT_PREFIXES)
+_AMBIGUOUS_PREFIXES = tuple(_strip(t) for t in AMBIGUOUS_PREFIXES)
+
+
+def classify_term(term) -> str:
+    """'explicit' | 'ambiguous' | 'unclassified'; explicit is checked before ambiguous."""
+    t = _strip(term)
+    if t is None:
+        return "ambiguous"
+    if t in _EXPLICIT_EXACT or t.startswith(_EXPLICIT_PREFIXES):
+        return "explicit"
+    if t in _AMBIGUOUS_EXACT or t.startswith(_AMBIGUOUS_PREFIXES):
+        return "ambiguous"
+    return "unclassified"
 
 
 def _phi(x: float) -> float:
@@ -71,9 +85,8 @@ def _get(student, key, default):
 
 
 def sama_evidence(term, teacher_id, student, denials) -> dict:
-    t = _strip(term)
-    explicit = t is not None and any(t == e or t.startswith(e + " ") for e in _EXPLICIT)
-    ambiguous = (not explicit) and t in _AMBIGUOUS
+    cls = classify_term(term)
+    explicit, ambiguous = cls == "explicit", cls == "ambiguous"
     confirmed = [int(x) for x in _get(student, "sama_confirmed", [])]
     flags = [str(f) for f in _get(student, "flags", [])]
     sid = _get(student, "rawi_id", None)

@@ -135,11 +135,32 @@ def test_term_table():
 def test_score_cli_prints_term_table(tmp_path, capsys):
     from isnad import cli
     rawi = pd.DataFrame([_rawi_row(1, 197.0), _rawi_row(2, 219.0)])
-    ed = pd.DataFrame([dict(teacher_id=1, student_id=2, hadith_id=1, position=0, term="كتب إلي",
+    ed = pd.DataFrame([dict(teacher_id=1, student_id=2, hadith_id=1, position=0, term="فيما قرأ",
                             chain_type=None, entry_kind="hadith")])
     ed.to_parquet(tmp_path / "e.parquet")
     rawi.to_parquet(tmp_path / "r.parquet")
     cli.main(["score", "--edges", str(tmp_path / "e.parquet"), "--rawi", str(tmp_path / "r.parquet"),
               "--out", str(tmp_path / "o.parquet")])
     out = capsys.readouterr().out
-    assert "unclassified 1" in out and "كتب إلي\t1" in out
+    assert "unclassified 1" in out and "فيما قرأ\t1" in out
+
+
+import pytest  # noqa: E402
+
+
+@pytest.mark.parametrize("term,expected", [
+    ("سمع", "explicit"), ("أخبره", "explicit"), ("صريح في السماع", "explicit"),
+    ("حدثه", "explicit"), ("سألت", "explicit"), ("أخبرته", "explicit"),
+    ("قال لي", "explicit"), ("سأل", "explicit"), ("أخبرهم", "explicit"),
+    ("حدثتني", "explicit"), ("رأيت", "explicit"), ("سألنا", "explicit"),
+    ("أخبراه", "explicit"), ("أخبرتني", "explicit"), ("حدثهم", "explicit"),
+    ("في حكم العنعنة", "ambiguous"), ("قالت", "ambiguous"), ("فقال", "ambiguous"),
+    ("يحدث عن", "ambiguous"),
+    ("قلت", "unclassified"),  # first-person speech, not a transmission verb: left unclassified
+    ("حدثنا", "explicit"), ("عن", "ambiguous"), (None, "ambiguous"),
+    ("أنبأنا", "explicit"), ("قرئ على", "explicit"), ("قال", "ambiguous"),
+    ("xyz", "unclassified"),
+])
+def test_classify_term(term, expected):
+    from isnad.score import classify_term
+    assert classify_term(term) == expected
