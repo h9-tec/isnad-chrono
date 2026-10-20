@@ -358,3 +358,15 @@ def test_all_null_shawahid_companion_dropped(tmp_path):
     assert "companion_rawi_id" not in pd.read_parquet(out / "data" / "shawahid.parquet").columns
     readme = (out / "README.md").read_text()
     assert "null on every row" in readme and "n/a" not in readme
+
+
+def test_failed_build_can_be_rebuilt(tmp_path):
+    d, out = tmp_path / "data", tmp_path / "release_hf"
+    _inputs(d)
+    with mock.patch.object(export_hf, "check_terms", side_effect=ValueError("boom")):
+        with pytest.raises(ValueError):
+            export_hf.build_release(d, out, matns={})
+    with pytest.raises(ValueError):  # half-written folder: push must refuse it
+        export_hf.verify_release(out)
+    export_hf.build_release(d, out, matns={})
+    assert export_hf.verify_release(out)

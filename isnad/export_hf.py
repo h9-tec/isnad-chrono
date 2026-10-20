@@ -625,6 +625,9 @@ def build_release(data_dir: str | Path = "data", out: str | Path = "release_hf",
         guard_out(out, data_dir, p.values())
         shutil.rmtree(out)
     (out / "data").mkdir(parents=True)
+    # mark the folder as a release first, so a build that fails half-way can be rebuilt over
+    # (push still refuses it: verify_release needs every config and README.md)
+    (out / "MANIFEST.json").write_text("{}")
     manifest: Manifest = {}
     for name, df in tables.items():
         check_columns(df, name)
