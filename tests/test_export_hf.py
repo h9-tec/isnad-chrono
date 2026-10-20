@@ -135,7 +135,7 @@ def test_release_configs_and_denylist(tmp_path):
     assert checks["cl_k2_rate_multi"] == 1.0 and checks["cl_k3_rate_multi"] == 0.0
     assert checks["cl_k2_bounded_rate"] == 1.0  # synthetic intervals are 20 years wide
     assert "coverage_groups_cl_k2_dated_rate" not in checks
-    assert checks["release_version"] == "v0.1.1"
+    assert checks["release_version"] == "v0.1.1" and checks["n_terms_withheld"] == 0
     assert checks["cl_k2_prior_only_rate"] == 0.0 and checks["coverage_cl_k2_prior_only"] == 0
     assert checks["all_occurrences_have_chain_rate"] == 1.0
     assert checks["six_books_cached_rate"] == 2 / 3  # pages 2 and 3 of the 3 b-1 occurrences
@@ -186,6 +186,14 @@ def test_long_terms_rejected():
     with pytest.raises(ValueError):
         export_hf.check_terms(pd.DataFrame({"term": ["كان رسول الله يعرض الكتاب على جبريل"]}),
                               "chains")
+
+
+def test_long_terms_withheld_in_release():
+    df = pd.DataFrame({"term": ["حدثنا", None, "وجدت في كتابه بخط يده ولم أسمعه منه"], "x": [1, 2, 3]})
+    out, n = export_hf.withhold_long_terms(df)
+    assert n == 1 and out.term.isna().tolist() == [False, True, True]
+    assert df.term.notna().sum() == 2  # input untouched
+    export_hf.check_terms(out, "chains")
 
 
 def test_name_columns_denylisted():

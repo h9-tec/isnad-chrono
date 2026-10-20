@@ -82,7 +82,9 @@ hashes), `shawahid` (corroborating reports by other Companions, ids only), `shaw
   (number of distinct surviving teacher-student links touching the narrator); `method` (`known`, `inferred`, `prior_only`).
 - `chains`: `hadith_id`, `chain_no` (one chain per path to the compiler after splitting at ح),
   `position` (0 = earliest narrator, the compiler is last), `rawi_id`, `term` (the transmission
-  formula by which the next narrator received from this one, e.g. حدثنا, عن), `unjoined` (an earlier tahwil segment that could
+  formula by which the next narrator received from this one, e.g. حدثنا, عن; a term longer than
+  6 words is a scribal note rather than a formula and is withheld as null: {{n_terms_withheld}}
+  cells across `chains` and `edge_scores`), `unjoined` (an earlier tahwil segment that could
   not be joined to the final chain), `source` (`html`, `flat`, `html+flat`).
 - `groups`: `group_id`, `n_entries`, `n_chains` (the site's counts), `books`, `n_occurrences`,
   `complete` (every occurrence page was cached when the `groups` stage ran),

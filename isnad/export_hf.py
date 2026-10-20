@@ -476,6 +476,20 @@ def check_terms(df: pd.DataFrame, label: str, max_words: int = MAX_TERM_WORDS) -
         raise ValueError(f"{label}.term: cell longer than {max_words} words")
 
 
+def withhold_long_terms(df: pd.DataFrame, max_words: int = MAX_TERM_WORDS
+                        ) -> tuple[pd.DataFrame, int]:
+    """Null every ``term`` of more than max_words words (long scribal notes such as "وجدت في
+    كتابه بخط يده ولم أسمعه منه" are site text, not a formula); returns (table, n withheld)."""
+    if "term" not in df.columns:
+        return df, 0
+    long_ = df["term"].map(lambda t: isinstance(t, str) and len(t.split()) > max_words)
+    if not long_.any():
+        return df, 0
+    df = df.copy()
+    df.loc[long_, "term"] = None
+    return df, int(long_.sum())
+
+
 def _select(df: pd.DataFrame, cols: list[str] | None, label: str) -> pd.DataFrame:
     if cols is None:
         return df
@@ -565,6 +579,10 @@ def build_release(data_dir: str | Path = "data", out: str | Path = "release_hf",
         else:
             log.warning("optional config %s skipped: %s missing", name, p[key])
 
+    n_withheld = 0
+    for name in list(tables):
+        tables[name], n = withhold_long_terms(tables[name])
+        n_withheld += n
     rd_flag = (tables["report_dates"].groupby("group_id").all_occurrences_have_chain.first()
                .rename("all_occurrences_have_chain"))
     tables["groups"] = tables["groups"].merge(rd_flag, left_on="group_id", right_index=True,
@@ -597,6 +615,7 @@ def build_release(data_dir: str | Path = "data", out: str | Path = "release_hf",
     checks = {"release_version": VERSION, **flatten(align, "alignment_"),
               **flatten(sanity, "sanity_"), **flatten(cov, "coverage_"),
               **{k: cov[k] for k in STATUS_KEYS},
+              "n_terms_withheld": n_withheld,
               "n_hadith_pages_cached": len(cached) if cached is not None else None,
               "six_books_cached_rate": six_books_cached_rate(tables["occurrences"], cached),
               **flatten(dating_m, "dating_")}
