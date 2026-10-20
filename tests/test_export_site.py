@@ -9,9 +9,10 @@ import pytest
 
 from isnad import tree
 from isnad.edits import EDIT_COLS
-from isnad.export_site import (SiteContext, atlas_table, check_keys, group_json, group_path,
-                               meta_table, narrator_detail, narrator_path, narrators_table,
-                               run_export_site, search_key, write_json)
+from isnad.export_site import (SiteContext, atlas_table, check_keys, first_kunya, group_json,
+                               group_path, meta_table, narrator_detail, narrator_path,
+                               narrators_table, run_export_site, search_key, search_tables,
+                               write_json)
 
 
 @pytest.fixture
@@ -404,3 +405,78 @@ def test_page_weight_on_real_export():
     assert max(p.stat().st_size for p in out.glob("search/**/*.json")) <= 600_000
     jsonschema.validate(json.loads((out / "atlas.json").read_text(encoding="utf-8")),
                         _schema("atlas"))
+
+
+def test_first_kunya_trims_editorial_notes():
+    note = "وفي كتاب أبي نعيم : قال ابن منده : كنيته أبو الربيع . قال أبو نعيم : وهو وهم"
+    assert first_kunya(note) is None
+    assert first_kunya("أبو عمارة ، ويقال : أبو عمار") == "أبو عمارة"
+    assert first_kunya("أم سلمة") == "أم سلمة"
+    assert first_kunya("أبو بكر وقيل أبو عبد الله") == "أبو بكر"
+    assert first_kunya(None) is None and first_kunya(float("nan")) is None
+    assert first_kunya("أبو " + "ا" * 40) is None  # longer than 40 chars
+
+
+def test_narrators_kunya_is_trimmed(tmp_data):
+    r = pd.read_parquet(tmp_data / "rawi.parquet")
+    r["kunya"] = ["أبو عمارة ، ويقال : أبو عمار", "وفي كتاب أبي نعيم : كنيته أبو الربيع", None]
+    r.to_parquet(tmp_data / "rawi.parquet")
+    by = {x["id"]: x for x in narrators_table(tmp_data)}
+    assert by[5]["kunya"] == "أبو عمارة"
+
+
+def test_bukhari_10_resolves_at_search_tables(tmp_data):
+    occ = pd.read_parquet(tmp_data / "occurrences.parquet")
+    extra = pd.DataFrame({"group_id": ["tk-42"], "hadith_id": [15], "book_slug": ["b-1"],
+                          "numbering": ["١٠"]})
+    pd.concat([occ, extra]).to_parquet(tmp_data / "occurrences.parquet")
+    t = search_tables(tmp_data)
+    slug, num = search_key("bukhari", "10").split(":")
+    assert (slug, num) == ("b-1", "10")
+    assert t["search.json"]["aliases"]["bukhari"] == "b-1"
+    assert t[f"search/n/{slug}.json"]["numbering"][num] == ["tk-42"]
+    assert t["search/h/15.json"]["15"] == ["tk-42"]
+
+
+def test_run_export_site_missing_checks_raises(tmp_data, tmp_path):
+    with pytest.raises(FileNotFoundError):
+        run_export_site(str(tmp_data), str(tmp_path / "out"), str(tmp_path / "nope.json"))
+
+
+def test_cli_missing_checks_exits_nonzero(tmp_data, tmp_path, capsys):
+    from isnad import cli
+    with pytest.raises(SystemExit) as e:
+        cli.main(["export-site", "--data-dir", str(tmp_data), "--out", str(tmp_path / "out"),
+                  "--checks", str(tmp_path / "nope.json")])
+    assert e.value.code != 0
+    assert "not found" in capsys.readouterr().err
+    assert not (tmp_path / "out").exists()
+
+
+def _strings(obj, path=""):
+    if isinstance(obj, str):
+        yield path, obj
+    elif isinstance(obj, dict):
+        for k, v in obj.items():
+            yield from _strings(v, f"{path}/{k}")
+    elif isinstance(obj, list):
+        for i, v in enumerate(obj):
+            yield from _strings(v, f"{path}[]")
+
+
+def test_no_long_strings_in_real_export():
+    out = Path("site_data")
+    if not (out / "atlas.json").exists():
+        pytest.skip("no real export")
+    worst = (0, "", "")
+    for p in out.rglob("*.json"):
+        obj = json.loads(p.read_text(encoding="utf-8"))
+        for path, v in _strings(obj):
+            if p.name == "meta.json" and path == "/books[]/title":
+                continue
+            if len(v) > worst[0]:
+                worst = (len(v), f"{p}:{path}", v)
+    assert worst[0] <= 80, worst
+    nar = json.loads((out / "narrators.json").read_text(encoding="utf-8"))
+    k = nar["cols"].index("kunya")
+    assert all(r[k] is None or len(r[k]) <= 40 for r in nar["rows"])

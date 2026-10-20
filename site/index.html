@@ -36,7 +36,8 @@
       <a href="?q=tk-12688" data-q="tk-12688" dir="ltr">tk-12688</a>
       <a href="?q=%D8%B3%D9%81%D9%8A%D8%A7%D9%86%20%D8%A8%D9%86%20%D8%B9%D9%8A%D9%8A%D9%86%D8%A9" data-q="سفيان بن عيينة">سفيان بن عيينة</a>
     </div>
-    <div id="results" class="results" aria-live="polite"></div>
+    <div id="results" class="results"></div>
+    <p id="status" class="visually-hidden" role="status" aria-live="polite"></p>
   </section>
 
   <main class="layout">
@@ -53,10 +54,10 @@
           <span><i class="pill">n</i>تغييرات اللفظ</span>
         </div>
         <div class="zoom" role="group" aria-label="تكبير">
-          <button type="button" data-zoom="out" title="تصغير">−</button>
-          <button type="button" data-zoom="in" title="تكبير">+</button>
-          <button type="button" data-zoom="fit" title="ملاءمة العرض">ملاءمة</button>
-          <button type="button" data-zoom="reset" title="الحجم الأصلي">100%</button>
+          <button type="button" data-zoom="out" title="تصغير" aria-label="تصغير (zoom out)">−</button>
+          <button type="button" data-zoom="in" title="تكبير" aria-label="تكبير (zoom in)">+</button>
+          <button type="button" data-zoom="fit" title="ملاءمة العرض" aria-label="ملاءمة العرض (fit)">ملاءمة</button>
+          <button type="button" data-zoom="reset" title="الحجم الأصلي" aria-label="الحجم الأصلي (100%)">100%</button>
         </div>
       </div>
       <div id="tree-scroll" class="tree-scroll">
@@ -67,7 +68,7 @@
         <svg id="tree" role="group" aria-label="شجرة الأسانيد: انقر أو اضغط Enter على راوٍ لعرض تفاصيله"></svg>
       </div>
     </section>
-    <aside id="panel" class="panel" aria-live="polite"></aside>
+    <aside id="panel" class="panel" aria-label="تفاصيل المجموعة"></aside>
   </main>
 
   <footer class="site-footer">
@@ -76,12 +77,13 @@
       · <a href="https://huggingface.co/datasets/HeshamHaroon/isnad-chrono">مجموعة البيانات</a>
       · <a href="https://github.com/h9-tec/isnad-chrono">الشيفرة</a>
     </p>
-    <p>الأرقام المشتقة برخصة CC-BY-4.0 · لا يُعاد نشر نص الحديث</p>
-    <p dir="ltr" lang="en">Source: <a href="https://hdith.com">hdith.com</a> · <a href="https://huggingface.co/datasets/HeshamHaroon/isnad-chrono">Dataset</a> · <a href="https://github.com/h9-tec/isnad-chrono">Code</a> · Derived numbers CC-BY-4.0 · no hadith text is redistributed</p>
+    <p>الأرقام المشتقة برخصة CC-BY-4.0 · لا يُعاد نشر نص الحديث · الأسماء والكنى وصيغ التحمّل من hdith.com (خارج رخصة CC-BY)</p>
+    <p dir="ltr" lang="en">Source: <a href="https://hdith.com">hdith.com</a> · <a href="https://huggingface.co/datasets/HeshamHaroon/isnad-chrono">Dataset</a> · <a href="https://github.com/h9-tec/isnad-chrono">Code</a> · Derived numbers CC-BY-4.0 · no hadith text is redistributed · Names, kunyas and transmission terms: hdith.com (not covered by CC-BY)</p>
   </footer>
 
   <script src="vendor/d3.v7.min.js"></script>
   <script src="data.js"></script>
+  <script src="common.js"></script>
   <script src="tree.js"></script>
   <script src="explorer.js"></script>
 </body>

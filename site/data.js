@@ -1,9 +1,11 @@
 // Data access for the isnad-chrono site: fetch + cache + shard paths.
-// On GitHub Pages the export lives under ./data/; locally the repo root is
-// served (python -m http.server) and the export is ../site_data/.
+// Deployed (GitHub Pages or any custom domain) the export lives under ./data/;
+// on localhost the repo root is served (python -m http.server) and the export
+// is ../site_data/.
 (function () {
   "use strict";
-  const base = location.hostname.endsWith("github.io") ? "./data/" : "../site_data/";
+  const DEV_HOSTS = ["localhost", "127.0.0.1"];
+  const base = DEV_HOSTS.includes(location.hostname) ? "../site_data/" : "./data/";
   const cache = new Map();
 
   function load(path) {

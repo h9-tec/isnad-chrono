@@ -126,7 +126,6 @@
         root,
         width: maxX - minX + NODE_W,
         height: maxDepth * LAYER_H + PAD_TOP + PAD_BOTTOM,
-        maxLayer: Math.max(...d3.rollup([...nodes.values()], (v) => v.length, (n) => n.layer).values()),
         nChains: chains.length,
         nodes: [...nodes.values()],
         links,

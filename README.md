@@ -6,7 +6,15 @@ Scores every teacher-to-student link in the hadith chains (isnads) of hdith.com'
 
 Live site: https://h9-tec.github.io/isnad-chrono/
 
-The site is a static, Arabic-first (RTL) explorer of the derived numbers: an atlas of narrator-to-student links with their meeting probabilities, narrator pages, leaderboards of the weakest links, and a methods page. It shows derived numbers only; no hadith text is redistributed.
+The site is a static, Arabic-first (RTL) explorer of the report-dating results, in five pages:
+
+- **Explorer** (`index.html`): search by book and number (`bukhari 10`, `مسلم 2864`), hadith id, group id (`tk-N`) or narrator name; a report group's chains are merged into one tree (companion at the top, compilers at the bottom) with the common links (k2/k3, partial) ringed, wording-change (edit) badges on the narrators who introduced them, and the transmission term on each link.
+- **Narrators** (`narrator.html`): recorded and inferred birth and death dates on a timeline, top teachers and students, the groups where the narrator is the common link, and dropped dating links.
+- **Atlas** (`atlas.html`): histogram of common-link death years (bounded intervals only, per book), the edit-drift curve by depth, and corpus coverage.
+- **Boards** (`boards.html`): narrators who are the common link of the most groups, the earliest-dated reports, the narrators with the most dropped dating links, and the most frequent edit introducers.
+- **Method** (`method.html`): the pipeline in five steps with the release checks.
+
+The site shows derived numbers plus narrator names, kunyas and transmission terms from hdith.com; no hadith text. The names, kunyas and terms are not covered by the CC-BY license of the derived numbers.
 
 Export the site data, then serve locally from the repo root:
 
@@ -92,7 +100,7 @@ export-hf --out release_hf [--push]   # release_hf/: configs, checks.json, READM
 
 ## Licensing
 
-Code: MIT (see `LICENSE`). The released dataset is licensed CC-BY-4.0 and contains derived numbers only (IDs, years, flags, scores, verdicts). No hdith.com text, names, or matn is redistributed; the export enforces a column denylist. hdith.com is the data source and is cited. v0.1 is published on Hugging Face (https://huggingface.co/datasets/HeshamHaroon/isnad-chrono) as derived numbers and text hashes only. The license of hdith.com itself is unstated; no source text is redistributed. Takedown or correction requests: the discussions of the HF dataset repo.
+Code: MIT (see `LICENSE`). The released dataset is licensed CC-BY-4.0 and contains derived numbers only (IDs, years, flags, scores, verdicts). No hdith.com text, names, or matn is redistributed; the export enforces a column denylist. hdith.com is the data source and is cited. v0.1 is published on Hugging Face (https://huggingface.co/datasets/HeshamHaroon/isnad-chrono) as derived numbers and text hashes only. The license of hdith.com itself is unstated; no source text is redistributed. The static site (not the HF dataset) additionally shows narrator names, kunyas and transmission terms from hdith.com, outside CC-BY. Takedown or correction requests: the discussions of the HF dataset repo.
 
 ## Contact
 

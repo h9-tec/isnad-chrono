@@ -13,13 +13,9 @@
     ["no_common_node", "بلا راوٍ مشترك", "no common node"],
   ];
 
-  // ---------- pure helpers (mirrors isnad.export_site.search_key) ----------
+  const { esc, narratorName, narratorLink, asciiDigits, arNorm, announce } = window.ISNADUI;
 
-  function asciiDigits(s) {
-    return String(s)
-      .replace(/[٠-٩]/g, (c) => String(c.charCodeAt(0) - 0x0660))
-      .replace(/[۰-۹]/g, (c) => String(c.charCodeAt(0) - 0x06f0));
-  }
+  // ---------- pure helpers (mirrors isnad.export_site.search_key) ----------
 
   function resolveBook(book, idx) {
     const aliases = (idx && idx.aliases) || {};
@@ -53,24 +49,7 @@
     return { kind: "narrator", key: s };
   }
 
-  function arNorm(s) {
-    return String(s || "")
-      .replace(/[ً-ٰٟـ]/g, "")
-      .replace(/[أإآٱ]/g, "ا")
-      .replace(/ى/g, "ي")
-      .replace(/ة/g, "ه")
-      .replace(/ؤ/g, "و")
-      .replace(/ئ/g, "ي")
-      .replace(/\s+/g, " ")
-      .trim()
-      .toLowerCase();
-  }
-
-  function esc(s) {
-    return String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
-  }
-
-  window.IsnadExplorer = { normalizeQuery, asciiDigits, arNorm };
+  window.IsnadExplorer = { normalizeQuery };
   if (typeof document === "undefined" || !document.getElementById("search-form")) return;
 
   // ---------- page ----------
@@ -82,6 +61,7 @@
   const svg = d3.select("#tree");
   const scroller = $("#tree-scroll");
   const empty = $("#tree-empty");
+  const emptyHTML = empty.innerHTML;
   let state = null; // {g, layout, meta, nm}
   let scale = 1;
   let normIndex = null;
@@ -93,19 +73,24 @@
     return (b && b.title) || slug;
   }
 
-  function narratorName(id, nm) {
-    const n = nm && nm.get(id);
-    return n ? n.name : `p-${id}`;
-  }
-
-  function narratorLink(id, nm) {
-    const n = nm && nm.get(id);
-    if (n && n.placeholder) return `<span class="ph">${esc(n.name)}</span>`;
-    return `<a href="narrator.html?id=${id}">${esc(narratorName(id, nm))}</a>`;
-  }
-
-  function setResults(html) {
+  function setResults(html, status) {
     results.innerHTML = html || "";
+    if (status != null) announce(status);
+  }
+
+  // Back to the start page (popstate to a bare URL): no group, no results, empty panel.
+  function resetPage() {
+    ++loadToken; // drop any in-flight group load
+    state = null;
+    input.value = "";
+    setResults("");
+    svg.selectAll("*").remove();
+    svg.attr("width", 0).attr("height", 0);
+    empty.innerHTML = emptyHTML;
+    empty.hidden = false;
+    panel.innerHTML = "";
+    document.title = "isnad-chrono · مستكشف الأسانيد";
+    announce("");
   }
 
   function setURL(params, push) {
@@ -149,7 +134,7 @@
   }
 
   async function choose(ids, label) {
-    if (!ids || !ids.length) return setResults(`<p class="error">لا توجد مجموعة لـ ${esc(label)}.</p>`);
+    if (!ids || !ids.length) return setResults(`<p class="error">لا توجد مجموعة لـ ${esc(label)}.</p>`, `لا توجد مجموعة لـ ${label}`);
     if (ids.length === 1) {
       setResults("");
       return showGroup(ids[0], { push: false });
@@ -168,7 +153,8 @@
     });
     setResults(
       `<p>${esc(label)} يقع في ${ids.length} مجموعات، اختر واحدة:</p><ul class="choices">${items.join("")}</ul>` +
-        (ids.length > MAX_CHOICES ? `<p class="muted">و${ids.length - MAX_CHOICES} أخرى…</p>` : "")
+        (ids.length > MAX_CHOICES ? `<p class="muted">و${ids.length - MAX_CHOICES} أخرى…</p>` : ""),
+      `${label}: ${ids.length} مجموعات`
     );
   }
 
@@ -187,16 +173,17 @@
     }
     const byChains = (a, b) => (b.n_chains || 0) - (a.n_chains || 0);
     const hits = prefix.sort(byChains).concat(inner.sort(byChains)).slice(0, MAX_NARRATOR_HITS);
-    if (!hits.length) return setResults(`<p class="error">لا يوجد راوٍ باسم «${esc(q)}».</p>`);
+    if (!hits.length) return setResults(`<p class="error">لا يوجد راوٍ باسم «${esc(q)}».</p>`, `لا يوجد راوٍ باسم ${q}`);
     setResults(
       `<p>الرواة المطابقون (${hits.length}${prefix.length + inner.length > hits.length ? "+" : ""}):</p><ul class="choices">` +
         hits
           .map(
-            (n) => `<li><a href="narrator.html?id=${n.id}">${esc(n.name)}</a>
+            (n) => `<li><a href="narrator.html?id=${encodeURIComponent(n.id)}">${esc(n.name)}</a>
             <span class="muted">${n.kunya ? esc(n.kunya) + " · " : ""}${IsnadTree.intervalText(n.dlo, n.dhi)} · ${n.n_chains} سند</span></li>`
           )
           .join("") +
-        "</ul>"
+        "</ul>",
+      `${hits.length} راوٍ مطابق`
     );
   }
 
@@ -231,6 +218,7 @@
     const layout = IsnadTree.layoutGroup(g, nm);
     state = { g, nm, meta, layout };
     document.title = `${g.id} · isnad-chrono`;
+    announce(`المجموعة ${g.id}: ${g.chains.length} سند`);
     scale = 1;
     draw(true);
     renderPanel();
@@ -302,7 +290,7 @@
     const links =
       i && i.placeholder
         ? '<p class="muted">راوٍ غير مسمى في الإسناد.</p>'
-        : `<p class="links"><a href="narrator.html?id=${d.id}">صفحة الراوي</a> · <a href="${ISNAD.rawiUrl(d.id)}" rel="noopener">hdith.com</a></p>`;
+        : `<p class="links"><a href="narrator.html?id=${encodeURIComponent(d.id)}">صفحة الراوي</a> · <a href="${esc(ISNAD.rawiUrl(d.id))}" rel="noopener">hdith.com</a></p>`;
     const inc = incoming.length
       ? `<p class="small">يروي عن <span class="en">incoming edges</span></p><ul class="incoming small">${incoming
           .map((l) => `<li>${esc(l.source.name)}: ${l.term ? esc(l.term) : '<span class="muted">صيغة غير معروفة</span>'} <span class="muted">(${l.n} سند)</span></li>`)
@@ -360,7 +348,7 @@
     parts.push(`<h3>المواضع <span class="en">occurrences</span></h3><ul class="books">` +
       books
         .map(([slug, hids]) => {
-          const links = hids.map((h) => `<a href="${ISNAD.hadithUrl(slug, h)}" rel="noopener">${h}</a>`).join(" ");
+          const links = hids.map((h) => `<a href="${esc(ISNAD.hadithUrl(slug, h))}" rel="noopener">${esc(h)}</a>`).join(" ");
           const title = `${esc(bookTitle(slug, meta))} <span class="muted">(${hids.length})</span>`;
           return hids.length > 8
             ? `<li><details><summary>${title}</summary><div class="hids">${links}</div></details></li>`
@@ -405,6 +393,7 @@
       setResults("");
       showGroup(p.get("g"), { push: false });
     } else if (p.get("q")) runQuery(p.get("q"), { push: false });
+    else resetPage();
   }
   window.addEventListener("popstate", fromURL);
   fromURL();

@@ -1,7 +1,7 @@
 // Narrator page: narrator.html?id=N (or ?q=name for a search, nothing for the index).
 (function () {
   "use strict";
-  const { esc, int, range, chains, narratorLink, groupLink, sortableTable } = window.ISNADUI;
+  const { esc, int, range, chains, narratorLink, groupLink, sortableTable, asciiDigits, arNorm, announce } = window.ISNADUI;
   const main = document.getElementById("narrator");
   const form = document.getElementById("narrator-form");
   const input = document.getElementById("nq");
@@ -37,11 +37,11 @@
     let head;
     if (q) {
       input.value = q;
-      const k = IsnadExplorer.arNorm(q);
+      const k = arNorm(q);
       const prefix = [];
       const inner = [];
       for (const n of all) {
-        const s = IsnadExplorer.arNorm(n.name);
+        const s = arNorm(n.name);
         if (s.startsWith(k)) prefix.push(n);
         else if (s.includes(" " + k)) inner.push(n);
       }
@@ -57,6 +57,7 @@
         <span class="en">${int(all.length)} narrators with at least one chain; the 50 with most chains are listed.</span></p>`;
     }
     main.innerHTML = head;
+    announce(q ? `${hits.length} راوٍ مطابق` : "");
     if (hits.length)
       main.appendChild(
         sortableTable(
@@ -171,6 +172,7 @@
     }
     const d = det || { teachers: [], students: [], cl_groups: [], dropped: [] };
     document.title = `${n.name} · isnad-chrono`;
+    announce(n.name);
 
     const facts = [];
     if (n.kunya) facts.push(`<dt>الكنية</dt><dd>${esc(n.kunya)}</dd>`);
@@ -242,8 +244,8 @@
     const q = input.value.trim();
     ev.preventDefault();
     if (!q) return;
-    location.href = /^\d+$/.test(IsnadExplorer.asciiDigits(q))
-      ? `narrator.html?id=${IsnadExplorer.asciiDigits(q)}`
+    location.href = /^\d+$/.test(asciiDigits(q))
+      ? `narrator.html?id=${asciiDigits(q)}`
       : `narrator.html?q=${encodeURIComponent(q)}`;
   });
 

@@ -96,6 +96,28 @@ def _str(v):
     return None if v is None or pd.isna(v) else str(v)
 
 
+KUNYA_CUTS = ("،", ",", ".", ":", "؛", " ويقال", " وقيل", " وفي ", " قال ")
+KUNYA_PREFIXES = ("أبو", "أبا", "أبي", "أم", "ابن", "أ")
+KUNYA_MAX = 40
+
+
+def first_kunya(v):
+    """The first kunya in a hdith.com kunya field, without its editorial notes: the text before
+    the first of ``KUNYA_CUTS``, kept only if it starts like a kunya and is at most
+    ``KUNYA_MAX`` chars, else None."""
+    s = _str(v)
+    if s is None:
+        return None
+    for c in KUNYA_CUTS:
+        i = s.find(c)
+        if i >= 0:
+            s = s[:i]
+    s = " ".join(s.split())
+    if not s or len(s) > KUNYA_MAX or not s.startswith(KUNYA_PREFIXES):
+        return None
+    return s
+
+
 def _page_title(d: Path, hadith_id: int):
     base = Path(d) / "raw" / "html" / "hadith"
     bad = (OSError, EOFError, zlib.error, UnicodeDecodeError)
@@ -169,7 +191,7 @@ def narrators_table(d: Path) -> list[dict]:
             name = PLACEHOLDER_NAME
         rows.append({
             "id": int(rid), "name": name or f"p-{rid}",
-            "kunya": _str(r["kunya"]) if r is not None else None,
+            "kunya": first_kunya(r["kunya"]) if r is not None else None,
             "gen": _int(r["generation_num"]) if r is not None else None,
             "dy": _int(r["death_year"]) if r is not None else None,
             "dk": _str(r["death_kind"]) if r is not None else None,
@@ -183,10 +205,6 @@ def narrators_table(d: Path) -> list[dict]:
             "support": _int(t["support"]) if t is not None else None,
             "n_chains": int(n), "placeholder": ph})
     return rows
-
-
-def _sorted(groups) -> list:
-    return sorted(groups)
 
 
 def search_tables(d: Path) -> dict:
@@ -204,9 +222,9 @@ def search_tables(d: Path) -> dict:
             continue
         nums.setdefault(s, {}).setdefault(search_key(s, n).split(":", 1)[1], set()).add(gn)
     for s, m in nums.items():
-        out[f"search/n/{s}.json"] = {"numbering": {k: _sorted(v) for k, v in m.items()}}
+        out[f"search/n/{s}.json"] = {"numbering": {k: sorted(v) for k, v in m.items()}}
     for sh, m in hids.items():
-        out[f"search/h/{sh}.json"] = {k: _sorted(v) for k, v in m.items()}
+        out[f"search/h/{sh}.json"] = {k: sorted(v) for k, v in m.items()}
     return out
 
 
@@ -507,7 +525,9 @@ def run_export_site(data_dir: str, out: str, checks_path: str | None = None) -> 
         if (o / sub).is_dir():
             shutil.rmtree(o / sub)
     checks = {}
-    if checks_path and Path(checks_path).exists():
+    if checks_path:
+        if not Path(checks_path).exists():
+            raise FileNotFoundError(f"--checks {checks_path} not found")
         checks = json.loads(Path(checks_path).read_text(encoding="utf-8"))
     man = {}
     man["meta.json"] = write_json(o / "meta.json", meta_table(d, checks))

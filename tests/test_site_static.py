@@ -56,7 +56,9 @@ def test_examples_and_data_base():
     for ex in ("bukhari 10", "مسلم 2864", "tk-12688", "سفيان بن عيينة"):
         assert ex in html
     js = (SITE / "data.js").read_text()
-    assert 'endsWith("github.io")' in js and '"./data/"' in js and '"../site_data/"' in js
+    assert "github.io" not in js and '"./data/"' in js and '"../site_data/"' in js
+    assert 'DEV_HOSTS = ["localhost", "127.0.0.1"]' in js
+    assert 'DEV_HOSTS.includes(location.hostname) ? "../site_data/" : "./data/"' in js
     for name in ("load", "narrators", "meta", "search", "group", "narratorDetail",
                  "groupPath", "narratorPath", "rawiUrl", "hadithUrl"):
         assert re.search(rf"\b{name}\b", js), name
@@ -186,3 +188,42 @@ def test_footers_and_workflows():
     pages_yml = (wf / "pages.yml").read_text()
     assert "ref: site-data" in pages_yml and "deploy-pages" in pages_yml
     assert "pytest" in (wf / "validate.yml").read_text()
+
+
+def test_final_fix_round():
+    index = (SITE / "index.html").read_text()
+    scripts = re.findall(r'<script src="([^"]+)"', index)
+    assert scripts.index("common.js") < scripts.index("explorer.js")
+    assert "explorer.js" not in (SITE / "narrator.html").read_text()
+    common = (SITE / "common.js").read_text()
+    for name in ("esc", "narratorName", "narratorLink", "arNorm", "asciiDigits"):
+        assert re.search(rf"function {name}\b", common), name
+    js = (SITE / "explorer.js").read_text()
+    for name in ("esc", "narratorName", "narratorLink", "arNorm", "asciiDigits"):
+        assert not re.search(rf"function {name}\b", js), name
+    assert "IsnadExplorer." not in (SITE / "narrator.js").read_text()
+    assert "${esc(ISNAD.hadithUrl(slug, h))}" in js
+    assert "else resetPage();" in js and "function resetPage()" in js
+    assert "maxLayer" not in (SITE / "tree.js").read_text()
+    for z in re.findall(r"<button[^>]*data-zoom[^>]*>", index):
+        assert "aria-label=" in z, z
+    for page in PAGES:
+        html = (SITE / page).read_text()
+        for tag in re.findall(r"<[^>]*aria-live[^>]*>", html):
+            assert 'id="status"' in tag and 'role="status"' in tag, (page, tag)
+    for page in ("index.html", "narrator.html"):
+        assert 'id="status"' in (SITE / page).read_text(), page
+
+
+def test_footer_names_clause_and_pages_hardening():
+    for p in SITE.glob("*.html"):
+        foot = re.search(r'<footer class="site-footer">(.*?)</footer>', p.read_text(), re.S).group(1)
+        assert "الأسماء والكنى وصيغ التحمّل من hdith.com (خارج رخصة CC-BY)" in foot, p.name
+        assert "Names, kunyas and transmission terms: hdith.com (not covered by CC-BY)" in foot, p.name
+    wf = (ROOT / ".github/workflows/pages.yml").read_text()
+    assert "continue-on-error" not in wf
+    assert wf.count("persist-credentials: false") == 2
+    assert "test -f _site/data/meta.json" in wf
+    readme = (ROOT / "README.md").read_text()
+    assert ("derived numbers plus narrator names, kunyas and transmission terms from hdith.com; "
+            "no hadith text") in readme

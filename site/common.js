@@ -1,9 +1,36 @@
-// Shared helpers for the narrator, atlas, boards and method pages.
+// Shared helpers for all pages (explorer, narrator, atlas, boards, method).
 (function () {
   "use strict";
 
   function esc(s) {
     return String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
+  }
+
+  // Arabic-Indic and Persian digits -> ASCII (mirrors isnad.export_site.search_key).
+  function asciiDigits(s) {
+    return String(s)
+      .replace(/[٠-٩]/g, (c) => String(c.charCodeAt(0) - 0x0660))
+      .replace(/[۰-۹]/g, (c) => String(c.charCodeAt(0) - 0x06f0));
+  }
+
+  // Loose Arabic normalisation for name search: no tashkeel/tatweel, alef/ya/ta marbuta folded.
+  function arNorm(s) {
+    return String(s || "")
+      .replace(/[ً-ٰٟـ]/g, "")
+      .replace(/[أإآٱ]/g, "ا")
+      .replace(/ى/g, "ي")
+      .replace(/ة/g, "ه")
+      .replace(/ؤ/g, "و")
+      .replace(/ئ/g, "ي")
+      .replace(/\s+/g, " ")
+      .trim()
+      .toLowerCase();
+  }
+
+  // Screen-reader status line (#status, aria-live="polite") on pages that have one.
+  function announce(msg) {
+    const el = typeof document !== "undefined" && document.getElementById("status");
+    if (el) el.textContent = msg || "";
   }
 
   const nf = new Intl.NumberFormat("en-US");
@@ -116,7 +143,10 @@
     return wrap;
   }
 
-  window.ISNADUI = { esc, int, range, chains, fmtCheck, fillChecks, narratorName, narratorLink, groupLink, sortableTable };
+  window.ISNADUI = {
+    esc, int, range, chains, fmtCheck, fillChecks, narratorName, narratorLink, groupLink, sortableTable,
+    asciiDigits, arNorm, announce,
+  };
 
   // Pages with [data-check] spans and no own script fill them here.
   if (typeof document !== "undefined" && document.body && document.body.dataset.checks === "auto") {

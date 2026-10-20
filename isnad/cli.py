@@ -4,6 +4,8 @@ Commands: fetch build chains groups dating tree edits gold score validate report
 """
 
 import argparse
+import sys
+from pathlib import Path
 
 import httpx
 
@@ -125,12 +127,20 @@ def main(argv=None) -> None:
     sp = top.add_parser("export-site", help="JSON tables for the static site")
     sp.add_argument("--data-dir", default="data")
     sp.add_argument("--out", default="site_data")
-    sp.add_argument("--checks", default="release_hf/checks.json")
+    sp.add_argument("--checks", default=None,
+                    help="release checks JSON for meta.json (an explicit path must exist; "
+                         "default: release_hf/checks.json when present)")
     args = ap.parse_args(argv)
 
     if args.cmd == "export-site":
         from isnad import export_site
-        man = export_site.run_export_site(args.data_dir, args.out, args.checks)
+        checks = args.checks
+        if checks is None:
+            checks = "release_hf/checks.json" if Path("release_hf/checks.json").exists() else None
+        elif not Path(checks).exists():
+            print(f"export-site: --checks {checks} not found", file=sys.stderr)
+            sys.exit(2)
+        man = export_site.run_export_site(args.data_dir, args.out, checks)
         for name, n in man.items():
             if "/" not in name:
                 print(name, n, "bytes")
