@@ -65,3 +65,53 @@ def test_group_complete_when_all_cached(tmp_path):
     g = pd.read_parquet(out / "groups.parquet")
     assert len(g) == 1 and bool(g["complete"][0])
     assert len(pd.read_parquet(out / "occurrences.parquet")) == len(occ)
+
+
+def _mk(n_segs, variant="x"):
+    from isnad.groups import Segment
+    segs = [Segment(i, "base", hash_text(f"b{i}{variant}"), None, [], f"b{i}{variant}", None)
+            for i in range(n_segs)]
+    from isnad.groups import GroupRecord
+    return GroupRecord("tk-1", 1, 1, ["b-1"], [(1, "b-1", "1")], segs, [], [])
+
+
+def _sink(tmp_path, recs):
+    from isnad.groups import _Sink
+    s = _Sink(tmp_path, {1})
+    for r in recs:
+        s.add(r)
+    s.close()
+    return s.stats, pd.read_parquet(tmp_path / "segments.parquet")
+
+
+def test_dedup_shorter_later_first_wins(tmp_path):
+    st, seg = _sink(tmp_path, [_mk(3), _mk(2)])
+    assert st["segment discrepancies"] == 1 and st["groups"] == 1 and len(seg) == 3
+    assert st["discrepancy longer later (ignored)"] == 0
+
+
+def test_dedup_longer_later_ignored(tmp_path):
+    st, seg = _sink(tmp_path, [_mk(2), _mk(3)])
+    assert st["segment discrepancies"] == 1 and len(seg) == 2
+    assert st["discrepancy longer later (ignored)"] == 1
+
+
+def test_dedup_tie_first_wins(tmp_path):
+    st, seg = _sink(tmp_path, [_mk(2, "x"), _mk(2, "y")])
+    txt = pd.read_parquet(tmp_path / "text" / "segments_text.parquet")
+    assert st["segment discrepancies"] == 1 and len(seg) == 2
+    assert set(txt["text"]) == {"b0x", "b1x"}
+
+
+def test_identical_duplicate_no_discrepancy(tmp_path):
+    st, seg = _sink(tmp_path, [_mk(2), _mk(2)])
+    assert st["segment discrepancies"] == 0 and len(seg) == 2
+
+
+def test_chunked_flush(tmp_path):
+    from isnad.groups import SCHEMAS, _Chunked
+    c = _Chunked(tmp_path / "o.parquet", SCHEMAS["occurrences"], chunk=2)
+    for i in range(5):
+        c.add(dict(group_id="g", hadith_id=i, book_slug="b", numbering="1"))
+    c.close()
+    assert len(pd.read_parquet(tmp_path / "o.parquet")) == 5
