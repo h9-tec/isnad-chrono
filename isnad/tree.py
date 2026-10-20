@@ -122,15 +122,23 @@ class Tree:
         return self._components[root]
 
 
-def merge_tree(chains: list[list[int]]) -> Tree:
-    """Union of chains (earliest narrator first, compiler last) into one graph."""
+def clean_chains(chains) -> tuple[list[tuple[int, ...]], int]:
+    """clean_chain each chain; drop empty ones and truncated ones shorter than 2 narrators.
+
+    Returns (kept chains, number truncated)."""
     cleaned: list[tuple[int, ...]] = []
     n_truncated = 0
-    for ch in chains:
+    for ch in chains or []:
         c, truncated = clean_chain(ch)
         n_truncated += truncated
         if c and not (truncated and len(c) < 2):
             cleaned.append(c)
+    return cleaned, n_truncated
+
+
+def merge_tree(chains: list[list[int]]) -> Tree:
+    """Union of chains (earliest narrator first, compiler last) into one graph."""
+    cleaned, n_truncated = clean_chains(chains)
     children: dict[int, set[int]] = {}
     roots: list[int] = []
     for ch in cleaned:

@@ -7,21 +7,35 @@ immediately preceding them (consecutive substitutions are alternatives for the s
 substitutions before any base form their own slot): the base carriers of a substitution are the
 group's occurrences minus the carriers of every substitution against that base segment.
 
-Attribution: the candidates are the narrators that lie on every parsed chain of every carrier
-(ancestor-or-self of each chain's compiler). The lowest one (max BFS depth in its component;
-ties -> more chains through it, then smaller rawi_id) introduced the change. It is ``ambiguous``
-when it also lies on a base carrier's chain (it transmitted the base text too), or when no
-candidate exists (carriers under different Companions, or no carrier has a chain).
+Attribution ("every chain" reading): the candidates are the narrators that lie on EVERY parsed
+chain of EVERY carrier hadith (ancestor-or-self of each chain's compiler); a carrier with several
+chains (tahwil) therefore constrains the candidates by each of its chains (rows with such a
+carrier are flagged ``has_tahwil_carrier`` for sensitivity analysis). The lowest candidate (max
+BFS depth in its component; ties -> more chains through it, then smaller rawi_id) introduced
+the change. ``status``:
 
-Edit rates: per depth d, ``n_transmissions`` counts (hadith, chain) links whose student is at
-depth d, summed over groups; ``n_edits`` counts attributed edits at depth d (ambiguous ones
-included). ``rate`` is edits per transmission, not a probability: one transmission can carry
-several edits, so it can exceed 1. ``is_leaf_edit`` marks an edit attributed to a
-chain-terminal (compiler), i.e. a single-witness variant; ``n_edits_nonleaf``/``rate_nonleaf``
-exclude those. Depth 0 (the Companion) is never a student: n_transmissions 0, rates null.
+* ``no_chain``: no carrier has a parsed chain (or the segment lists no carrier);
+* ``cross_root``: the carriers' chains start at more than one root (different Companions); no
+  attribution even when they share a compiler;
+* ``no_common_node``: one root but no narrator on every carrier chain (cannot happen with a
+  shared root, kept for safety);
+* ``partial``: some carriers have no parsed chain (``n_carriers_with_chain < n_carriers``); the
+  node is still computed for information but the row is excluded from the rates;
+* ``ambiguous``: the node also lies on a base carrier's chain (it transmitted the base text too);
+* ``attributed``: otherwise.
+
+``ambiguous`` (nullable bool) is set only for attributed/ambiguous rows. ``is_leaf_edit``: the
+node is the terminal (compiler) of one of the carrier chains, i.e. a single-witness variant.
+
+Edit rates count only status attributed/ambiguous rows: per depth d, ``n_transmissions`` counts
+(hadith, chain) links whose student is at depth d, summed over groups; ``n_edits`` counts edits at
+depth d. ``rate`` is edits per transmission, not a probability: one transmission can carry
+several edits, so it can exceed 1. ``n_edits_nonleaf``/``rate_nonleaf`` exclude leaf edits.
+Depth 0 (the Companion) is never a student: n_transmissions 0, rates null.
 
 A carrier missing from the group's occurrence list still joins the group's tree (and its
-transmissions are counted), but it is never a base carrier (``carriers_outside_group`` stat). Chains are cleaned exactly as ``merge_tree`` does (repeats collapsed / truncated).
+transmissions are counted), but it is never a base carrier (``carriers_outside_group`` stat).
+Chains are cleaned with ``tree.clean_chains``, exactly as ``merge_tree`` does.
 """
 
 from collections import Counter
@@ -30,43 +44,49 @@ from pathlib import Path
 
 import pandas as pd
 
-from isnad.tree import Tree, clean_chain, load_chains, merge_tree
+from isnad.tree import Tree, clean_chains, load_chains, merge_tree
+
+STATUSES = ("attributed", "ambiguous", "partial", "cross_root", "no_chain", "no_common_node")
+RATED = ("attributed", "ambiguous")
 
 
 @dataclass(frozen=True)
 class Attribution:
     rawi_id: int | None
     depth: int | None
-    ambiguous: bool
+    ambiguous: bool | None
+    status: str = "attributed"
+    is_leaf: bool = False
+    n_with_chain: int = 0
+    has_tahwil: bool = False
 
 
-def _cleaned(raw) -> list[tuple[int, ...]]:
-    out = []
-    for ch in raw or []:
-        c, truncated = clean_chain(ch)
-        if c and not (truncated and len(c) < 2):
-            out.append(c)
-    return out
-
-
-def _node_depth(tree: Tree, node: int, roots: set[int]) -> int:
-    ds = [tree.component(r).depth[node] for r in roots if node in tree.component(r).depth]
-    return min(ds) if ds else tree.depth.get(node, -1)
+def _chains(chains_by_hadith, h) -> list[tuple[int, ...]]:
+    return clean_chains(chains_by_hadith.get(h))[0]
 
 
 def attribute(tree: Tree, carriers: set[int], base_carriers: set[int],
               chains_by_hadith: dict[int, list[list[int]]]) -> Attribution:
-    carrier_chains = [c for h in carriers for c in _cleaned(chains_by_hadith.get(h))]
+    per = {h: _chains(chains_by_hadith, h) for h in carriers}
+    with_chain = [cs for cs in per.values() if cs]
+    n_with, tahwil = len(with_chain), any(len(cs) >= 2 for cs in with_chain)
+    carrier_chains = [c for cs in with_chain for c in cs]
     if not carrier_chains:
-        return Attribution(None, None, True)
+        return Attribution(None, None, None, "no_chain", False, 0, False)
+    roots = {c[0] for c in carrier_chains}
+    if len(roots) > 1:
+        return Attribution(None, None, None, "cross_root", False, n_with, tahwil)
     cand = set(carrier_chains[0]).intersection(*carrier_chains[1:])
     if not cand:
-        return Attribution(None, None, True)
-    roots = {c[0] for c in carrier_chains}
-    depth = {n: _node_depth(tree, n, roots) for n in cand}
-    node = min(cand, key=lambda n: (-depth[n], -tree.n_chains_through(n), n))
-    ambiguous = any(node in c for h in base_carriers for c in _cleaned(chains_by_hadith.get(h)))
-    return Attribution(node, depth[node], ambiguous)
+        return Attribution(None, None, None, "no_common_node", False, n_with, tahwil)
+    depth = tree.component(next(iter(roots))).depth
+    node = min(cand, key=lambda n: (-depth.get(n, -1), -tree.n_chains_through(n), n))
+    leaf = any(c[-1] == node for c in carrier_chains)
+    if n_with < len(carriers):
+        return Attribution(node, depth.get(node), None, "partial", leaf, n_with, tahwil)
+    amb = any(node in c for h in base_carriers for c in _chains(chains_by_hadith, h))
+    return Attribution(node, depth.get(node), amb, "ambiguous" if amb else "attributed", leaf,
+                       n_with, tahwil)
 
 
 def _edit_type(base_hash, variant_hash) -> str:
@@ -78,14 +98,15 @@ def _edit_type(base_hash, variant_hash) -> str:
 
 
 EDIT_COLS = ["group_id", "seg_no", "introduced_by_rawi_id", "generation_depth", "edit_type",
-             "ambiguous", "is_leaf_edit", "n_carriers", "n_base_carriers"]
+             "status", "ambiguous", "is_leaf_edit", "has_tahwil_carrier", "n_carriers",
+             "n_carriers_with_chain", "n_base_carriers"]
 
 
 def edits_table(segments: pd.DataFrame, occurrences: pd.DataFrame,
                 chains_by_hadith: dict[int, list[list[int]]], stats: dict | None = None
                 ) -> pd.DataFrame:
     """One row per substitution segment. ``stats`` (if given) receives the counters."""
-    st = Counter()
+    st: Counter = Counter()
     hids = occurrences.groupby("group_id").hadith_id.agg(lambda s: {int(h) for h in s})
     no_chain: set[int] = set()
     rows: list[dict] = []
@@ -104,53 +125,48 @@ def edits_table(segments: pd.DataFrame, occurrences: pd.DataFrame,
         witnesses = occ.union(*slots.values())
         st["carriers_outside_group"] += len(witnesses - occ)
         tree = merge_tree([c for h in sorted(witnesses) for c in chains_by_hadith.get(h, [])])
-        cleaned: dict[int, list] = {}
+        cleaned = {h: list(_chains(chains_by_hadith, h)) for h in witnesses}
         for slot, r, car in subs:
             base = occ - slots[slot]
-            missing = {h for h in car if not chains_by_hadith.get(h)}
-            no_chain |= missing
-            st["carrier_refs_without_chain"] += len(missing)
-            st["segments_no_carrier_chain"] += len(missing) == len(car)
-            for h in car | base:
-                if h not in cleaned:
-                    cleaned[h] = _cleaned(chains_by_hadith.get(h))
+            st["segments_no_carriers"] += not car
+            no_chain |= {h for h in car if not cleaned[h]}
             a = attribute(tree, car, base, cleaned)
+            st["carrier_refs_without_chain"] += len(car) - a.n_with_chain
             rows.append({"group_id": g, "seg_no": int(r.seg_no), "introduced_by_rawi_id": a.rawi_id,
                          "generation_depth": a.depth,
                          "edit_type": _edit_type(r.base_hash, r.variant_hash),
-                         "ambiguous": a.ambiguous,
-                         "is_leaf_edit": a.rawi_id is not None and a.rawi_id in tree.terminals,
-                         "n_carriers": len(car),
-                         "n_base_carriers": len(base)})
+                         "status": a.status, "ambiguous": a.ambiguous, "is_leaf_edit": a.is_leaf,
+                         "has_tahwil_carrier": a.has_tahwil, "n_carriers": len(car),
+                         "n_carriers_with_chain": a.n_with_chain, "n_base_carriers": len(base)})
     e = pd.DataFrame(rows, columns=EDIT_COLS)
-    e["seg_no"] = e.seg_no.astype("int64")
-    e["introduced_by_rawi_id"] = pd.array(list(e.introduced_by_rawi_id), dtype="Int64")
-    e["generation_depth"] = pd.array(list(e.generation_depth), dtype="Int64")
-    e["ambiguous"] = e.ambiguous.astype(bool)
+    for c in ("seg_no", "n_carriers", "n_carriers_with_chain", "n_base_carriers"):
+        e[c] = e[c].astype("int64")
+    for c in ("introduced_by_rawi_id", "generation_depth"):
+        e[c] = pd.array(list(e[c]), dtype="Int64")
+    e["ambiguous"] = pd.array(list(e.ambiguous), dtype="boolean")
     e["is_leaf_edit"] = e.is_leaf_edit.astype(bool)
-    e["n_carriers"] = e.n_carriers.astype("int64")
-    e["n_base_carriers"] = e.n_base_carriers.astype("int64")
+    e["has_tahwil_carrier"] = e.has_tahwil_carrier.astype(bool)
+    e["status"] = e.status.astype(str)
     if stats is not None:
-        attributed = e.introduced_by_rawi_id.notna()
-        stats.update({"segments": len(e), "attributed": int(attributed.sum()),
-                      "ambiguous": int((attributed & e.ambiguous).sum()),
-                      "unattributed": int((~attributed).sum()),
+        counts = e.status.value_counts()
+        stats.update({"segments": len(e), **{s: int(counts.get(s, 0)) for s in STATUSES},
                       "carriers_without_chain": len(no_chain), **st})
     return e
 
 
 def edit_rates(edits: pd.DataFrame, chains: dict[str, list[list[int]]]) -> pd.DataFrame:
-    """``chains``: group_id -> every parsed chain of the group's occurrences."""
+    """``chains``: group_id -> every parsed chain of the group's witnesses. Only rows with
+    status attributed/ambiguous count as edits."""
     trans: Counter = Counter()
     for g, raw in chains.items():
         tree = merge_tree(raw)
         for c in tree.chains:
             d = tree.component(c[0]).depth
             trans.update(d[n] for n in c[1:])
-    att = edits[edits.generation_depth.notna()]
+    att = edits[edits.status.isin(RATED) & edits.generation_depth.notna()]
     n_edits = Counter(int(x) for x in att.generation_depth)
     n_nonleaf = Counter(int(x) for x in att.generation_depth[~att.is_leaf_edit.astype(bool)])
-    depths = sorted(set(trans) | set(n_edits))
+    depths = sorted(set(trans) | set(n_edits) | {0})  # depth 0 always present (rates null)
     r = pd.DataFrame({"depth": depths, "n_transmissions": [trans[d] for d in depths],
                       "n_edits": [n_edits[d] for d in depths],
                       "n_edits_nonleaf": [n_nonleaf[d] for d in depths]}, dtype="int64")

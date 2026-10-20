@@ -15,37 +15,59 @@ def _tree(chains=CHAINS):
     return merge_tree([c for cs in chains.values() for c in cs])
 
 
+def _a(a):
+    return (a.rawi_id, a.depth, a.ambiguous, a.status)
+
+
 def test_attribution_lowest_common_ancestor():
     t = _tree()
-    a = attribute(t, {1, 2}, {3}, CHAINS)
-    assert (a.rawi_id, a.depth, a.ambiguous) == (2, 1, False)
+    assert _a(attribute(t, {1, 2}, {3}, CHAINS)) == (2, 1, False, "attributed")
     a = attribute(t, {1}, {2, 3}, CHAINS)  # a single witness: its own compiler
-    assert (a.rawi_id, a.depth, a.ambiguous) == (10, 3, False)
-    # a carrier without a parsed chain is ignored
-    a = attribute(t, {1, 2, 99}, {3}, CHAINS)
-    assert (a.rawi_id, a.depth, a.ambiguous) == (2, 1, False)
+    assert _a(a) == (10, 3, False, "attributed") and a.is_leaf and a.n_with_chain == 1
+
+
+def test_attribution_partial_coverage():
+    # only h1 has a chain: node still computed (its compiler) but the row is partial
+    a = attribute(_tree(), {1, 98, 99}, {2, 3}, CHAINS)
+    assert _a(a) == (10, 3, None, "partial") and a.n_with_chain == 1
 
 
 def test_attribution_ambiguous_when_lca_covers_base():
     t = _tree()
     a = attribute(t, {1, 3}, {2}, CHAINS)  # only the companion is shared, and h2 runs through him
-    assert (a.rawi_id, a.depth, a.ambiguous) == (1, 0, True)
-    # carriers under different companions share no node: unattributed
+    assert _a(a) == (1, 0, True, "ambiguous") and not a.is_leaf
+    # no carrier has a chain
+    assert _a(attribute(t, {98, 99}, {1, 2, 3}, CHAINS)) == (None, None, None, "no_chain")
+    assert _a(attribute(t, set(), {1, 2, 3}, CHAINS)) == (None, None, None, "no_chain")
+
+
+def test_attribution_cross_root():
+    # different companions -> no attribution, even when they share the compiler (10)
+    chains = {1: [[1, 2, 3, 10]], 4: [[7, 8, 10]]}
+    a = attribute(_tree(chains), {1, 4}, set(), chains)
+    assert _a(a) == (None, None, None, "cross_root") and a.n_with_chain == 2
     chains = {**CHAINS, 4: [[7, 8, 14]]}
-    a = attribute(_tree(chains), {1, 4}, {2, 3}, chains)
-    assert (a.rawi_id, a.depth, a.ambiguous) == (None, None, True)
-    # no carrier has a chain: unattributed
-    a = attribute(t, {98, 99}, {1, 2, 3}, CHAINS)
-    assert (a.rawi_id, a.depth, a.ambiguous) == (None, None, True)
+    assert attribute(_tree(chains), {1, 4}, {2, 3}, chains).status == "cross_root"
 
 
 def test_attribution_needs_every_chain_of_a_carrier():
     # h1 has two chains (tahwil); only 1, 3 and 10 lie on both, 2 does not
     chains = {1: [[1, 2, 3, 10], [1, 6, 3, 10]], 2: [[1, 2, 4, 11]], 3: [[1, 2, 3, 12]]}
     a = attribute(_tree(chains), {1}, {2}, chains)
-    assert (a.rawi_id, a.depth, a.ambiguous) == (10, 3, False)
+    assert _a(a) == (10, 3, False, "attributed") and a.has_tahwil and a.is_leaf
     a = attribute(_tree(chains), {1, 3}, {2}, chains)  # 3 is shared, 2 is not on h1's 2nd chain
-    assert (a.rawi_id, a.depth, a.ambiguous) == (3, 2, False)
+    assert _a(a) == (3, 2, False, "attributed") and a.has_tahwil and not a.is_leaf
+    assert not attribute(_tree(chains), {2, 3}, {1}, chains).has_tahwil
+
+
+def test_leaf_is_terminal_of_carrier_chains_not_of_tree():
+    # 10 compiles h1 but narrates mid-chain for h2's compiler 11: for carrier h2 it is not a leaf
+    chains = {1: [[1, 2, 10]], 2: [[1, 2, 10, 11]], 3: [[1, 5, 12]]}
+    a = attribute(_tree(chains), {1, 2}, {3}, chains)
+    assert (a.rawi_id, a.is_leaf) == (10, True)
+    chains = {1: [[1, 2, 10]], 2: [[1, 2, 10, 11]], 3: [[1, 2, 10, 13]]}
+    a = attribute(_tree(chains), {2, 3}, {1}, chains)
+    assert (a.rawi_id, a.status, a.is_leaf) == (10, "ambiguous", False)
 
 
 def _segments():
@@ -67,7 +89,8 @@ def _occ():
 def test_edit_type_classification():
     e = edits_table(_segments(), _occ(), CHAINS)
     assert list(e.columns) == ["group_id", "seg_no", "introduced_by_rawi_id", "generation_depth",
-                               "edit_type", "ambiguous", "is_leaf_edit", "n_carriers",
+                               "edit_type", "status", "ambiguous", "is_leaf_edit",
+                               "has_tahwil_carrier", "n_carriers", "n_carriers_with_chain",
                                "n_base_carriers"]
     assert list(e.seg_no) == [0, 2, 3, 5]  # base segments are not edits
     assert list(e.edit_type) == ["ins", "sub", "sub", "del"]
@@ -77,6 +100,7 @@ def test_edit_type_classification():
     assert list(e.introduced_by_rawi_id) == [2, 10, 12, 1]
     assert list(e.generation_depth) == [1, 3, 2, 0]
     assert list(e.ambiguous) == [False, False, False, True]
+    assert list(e.status) == ["attributed", "attributed", "attributed", "ambiguous"]
     assert list(e.is_leaf_edit) == [False, True, True, False]
 
 
@@ -100,6 +124,23 @@ def test_rates_by_depth():
     many = pd.concat([e[e.seg_no == 2]] * 3, ignore_index=True)
     r2 = edit_rates(many, {"g": [c for cs in CHAINS.values() for c in cs]})
     assert r2.set_index("depth").rate[3] == 3 / 2
+
+
+def test_partial_and_unattributed_rows_excluded_from_rates():
+    seg = pd.DataFrame({"group_id": ["g"] * 4, "seg_no": [0, 1, 2, 3],
+                        "kind": ["base", "substitution", "substitution", "substitution"],
+                        "base_hash": ["b"] * 4, "variant_hash": [None, "v1", "v2", "v3"],
+                        "carrier_hadith_ids": [[], [1, 98, 99], [98], []]})
+    stats: dict = {}
+    e = edits_table(seg, _occ(), CHAINS, stats=stats)
+    assert list(e.status) == ["partial", "no_chain", "no_chain"]
+    assert list(e.n_carriers_with_chain) == [1, 0, 0] and list(e.n_carriers) == [3, 1, 0]
+    assert e.introduced_by_rawi_id[0] == 10 and e.ambiguous.isna().all()
+    assert (stats["partial"], stats["no_chain"], stats["segments_no_carriers"]) == (1, 2, 1)
+    assert stats["carriers_without_chain"] == 2 and stats["carrier_refs_without_chain"] == 3
+    r = edit_rates(e, {"g": [c for cs in CHAINS.values() for c in cs]})
+    assert r.n_edits.sum() == 0 and r.n_edits_nonleaf.sum() == 0
+    assert r.depth[0] == 0 and r.n_transmissions[0] == 0 and r.rate[0] is pd.NA
 
 
 def test_cli_edits(tmp_path):

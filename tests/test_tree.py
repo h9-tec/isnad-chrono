@@ -1,7 +1,7 @@
 import pandas as pd
 
 from isnad.cli import main
-from isnad.tree import common_links, k_branches, merge_tree, partial_common_links, report_dates
+from isnad.tree import clean_chains, common_links, k_branches, merge_tree, partial_common_links, report_dates
 
 
 def test_merge_two_chains_shared_prefix():
@@ -166,3 +166,9 @@ def test_cl_all_chains_flag():
     single = report_dates(pd.DataFrame({"group_id": ["s"], "complete": [True]}),
                           {"s": merge_tree([[1, 2]])}, dates).iloc[0]
     assert pd.isna(single.cl_k2_all_chains)
+
+
+def test_clean_chains_filter():
+    kept, n = clean_chains([[1, 2, 2, 3], [], [4, 5, 4], [6, 6, 7, 6], [8]])
+    assert kept == [(1, 2, 3), (4, 5), (6, 7), (8,)] and n == 2
+    assert clean_chains(None) == ([], 0)
