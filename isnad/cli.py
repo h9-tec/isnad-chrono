@@ -27,6 +27,7 @@ def main(argv=None) -> None:
     r.add_argument("--concurrency", type=int, default=1)
     r.add_argument("--limit", type=int)
     r.add_argument("--include-passages", action="store_true")
+    r.add_argument("--shard", help="K/N: this worker takes pending rows with rowid %% N == K")
     f.add_parser("jobs", help="list submitted Firecrawl jobs from the ledger")
     rc = f.add_parser("recover", help="persist the results of an existing Firecrawl job")
     rc.add_argument("--job", required=True)
@@ -185,8 +186,12 @@ def main(argv=None) -> None:
                                             concurrency=args.concurrency,
                                             ledger=queue.ledger(args.kind))
                        if args.fetcher == "firecrawl" else local)
+            shard = None
+            if args.shard:
+                k, n = (int(x) for x in args.shard.split("/"))
+                shard = (k, n)
             fetch.run_fetch(queue, fetcher, args.kind, book=args.book, limit=args.limit,
-                            include_passages=args.include_passages)
+                            include_passages=args.include_passages, shard=shard)
             print(queue.counts_by(args.kind, args.book))
 
 

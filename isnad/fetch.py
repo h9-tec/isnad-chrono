@@ -136,8 +136,16 @@ class Queue:
         )
         self._db.commit()
 
-    def pending(self, kind=None, book=None, limit=None, include_passages=False) -> list[str]:
+    def pending(self, kind=None, book=None, limit=None, include_passages=False,
+                shard: tuple[int, int] | None = None) -> list[str]:
+        """Pending URLs; `shard=(k, n)` keeps rows with rowid % n == k so parallel workers never overlap."""
         sql, args = "SELECT url FROM pages WHERE status = 'pending'", []
+        if shard is not None:
+            k, n = shard
+            if not (0 <= k < n):
+                raise ValueError(f"bad shard {shard}")
+            sql += " AND (rowid % ?) = ?"
+            args += [n, k]
         if kind:
             sql += " AND kind = ?"
             args.append(kind)
@@ -513,12 +521,14 @@ def _persist(queue: Queue, root: Path, url: str, status, html) -> None:
 
 
 def run_fetch(queue: Queue, fetcher, kind: str, book=None, limit=None,
-              cache_root="data/raw/html", include_passages=False, log: Callable = print) -> FetchStats:
+              cache_root="data/raw/html", include_passages=False, log: Callable = print,
+              shard: tuple[int, int] | None = None) -> FetchStats:
     root = Path(cache_root) / kind
     root.mkdir(parents=True, exist_ok=True)
     stats = FetchStats()
     todo = []
-    for url in queue.pending(kind=kind, book=book, limit=limit, include_passages=include_passages):
+    for url in queue.pending(kind=kind, book=book, limit=limit, include_passages=include_passages,
+                             shard=shard):
         path = root / f"{queue.info(url)[1]}.html"
         if path.exists():
             queue.mark(url, "ok", path=path)

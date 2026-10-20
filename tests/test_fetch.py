@@ -664,3 +664,15 @@ def test_cli_allows_firecrawl_hadith_with_book(tmp_path, monkeypatch):
     assert seen["book"] == "b-1"
     cli.main(["--db", str(db), "fetch", "run", "--kind", "hadith", "--fetcher", "firecrawl", "--limit", "5"])
     assert seen["limit"] == 5
+
+
+def test_pending_shards_are_disjoint_and_complete(tmp_path):
+    q = Queue(tmp_path / "q.sqlite")
+    urls = [f"https://hdith.com/encyclopedia/book/b-9/h/{i}" for i in range(1, 11)]
+    for i, u in enumerate(urls, 1):
+        q.add(u, "hadith", id=i, book="b-9")
+    shards = [q.pending(kind="hadith", book="b-9", shard=(k, 3)) for k in range(3)]
+    assert sum(len(s) for s in shards) == len(urls)
+    assert len(set().union(*map(set, shards))) == len(urls)
+    with pytest.raises(ValueError):
+        q.pending(shard=(3, 3))
