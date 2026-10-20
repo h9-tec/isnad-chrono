@@ -170,3 +170,19 @@ def test_fix_round_1_strings():
         for td in re.findall(r'<td class="num">(.*?)</td>', html):
             if " / " in td:
                 assert td.startswith('<bdi dir="ltr">'), (page, td)
+
+
+def test_footers_and_workflows():
+    pages = list(SITE.glob("*.html"))
+    assert pages
+    for p in pages:
+        m = re.search(r'<footer class="site-footer">(.*?)</footer>', p.read_text(), re.S)
+        assert m, p.name
+        for needle in ("hdith.com", "huggingface.co/datasets/HeshamHaroon/isnad-chrono",
+                       "github.com/h9-tec/isnad-chrono", "CC-BY-4.0",
+                       "no hadith text is redistributed"):
+            assert needle in m.group(1), (p.name, needle)
+    wf = ROOT / ".github/workflows"
+    pages_yml = (wf / "pages.yml").read_text()
+    assert "ref: site-data" in pages_yml and "deploy-pages" in pages_yml
+    assert "pytest" in (wf / "validate.yml").read_text()

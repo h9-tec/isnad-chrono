@@ -2,6 +2,31 @@
 
 Scores every teacher-to-student link in the hadith chains (isnads) of hdith.com's corpus by the probability that the two narrators could have met, using narrator death and birth years with uncertainty, combined with textual sama' (audition) evidence. The scores are evaluated against classical critics' denials of contact (al-Marasil, Tuhfat al-Tahsil). The method is per-edge, explainable and uses no training.
 
+## Explore
+
+Live site: https://h9-tec.github.io/isnad-chrono/
+
+The site is a static, Arabic-first (RTL) explorer of the derived numbers: an atlas of narrator-to-student links with their meeting probabilities, narrator pages, leaderboards of the weakest links, and a methods page. It shows derived numbers only; no hadith text is redistributed.
+
+Export the site data, then serve locally from the repo root:
+
+```
+uv run python -m isnad.cli export-site --out site_data
+uv run python -m http.server 8765      # then open http://localhost:8765/site/
+```
+
+The deployed site reads its data from the orphan branch `site-data` (the `pages.yml` workflow checks it out into `_site/data`). To refresh it after a new export:
+
+```
+rm -rf /tmp/isnad-site-data && git init -b site-data /tmp/isnad-site-data \
+  && cp -r site_data/. /tmp/isnad-site-data/ \
+  && git -C /tmp/isnad-site-data add -A \
+  && git -C /tmp/isnad-site-data commit -qm "site data $(date -u +%F) from release v0.1.1" \
+  && git -C /tmp/isnad-site-data push -f git@github.com:h9-tec/isnad-chrono.git site-data
+```
+
+Then re-run the `pages` workflow (Actions, workflow_dispatch).
+
 ## Setup
 
 ```
@@ -61,6 +86,8 @@ export-hf --out release_hf [--push]   # release_hf/: configs, checks.json, READM
 - `release/` v1 export for publication (gitignored): `edges`, `edge_scores`, `rawi_dates`, `MANIFEST.json`
 - `release_hf/` v2 Hugging Face release built by `export-hf` (gitignored): `data/<config>.parquet`, `checks.json`, `MANIFEST.json`, `README.md`
 - `DATASET_CARD_v2.md` template of the HF dataset card (`{{placeholders}}` filled from the checks by `export-hf`)
+- `site/` static site (HTML/JS/CSS, vendored d3)
+- `site_data/` site JSON written by `export-site` (gitignored; published on the `site-data` branch)
 - `paper/` outline
 
 ## Licensing
