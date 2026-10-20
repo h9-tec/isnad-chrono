@@ -107,7 +107,7 @@ def test_run_export_site_writes_core(tmp_data, tmp_path):
             "search/h/11.json"} <= set(m)
     o = tmp_path / "out"
     n = json.loads((o / "search/n/b-2.json").read_text())
-    assert n["numbering"]["6"] == ["tk-107", "tk-5"]  # duplicated key keeps both, sorted ints
+    assert n["numbering"]["6"] == ["tk-107", "tk-5"]  # duplicated key keeps both, sorted strings
     assert json.loads((o / "search/n/b-1.json").read_text())["numbering"] == {"7": ["tk-6"], "8": ["tg-9"]}
     assert json.loads((o / "search/h/11.json").read_text())["11"] == ["tk-107", "tk-5"]
     s = json.loads((o / "search.json").read_text())
@@ -137,3 +137,20 @@ def test_title_from_cached_page_and_page_count(tmp_data):
         "b-1": "صحيح البخاري", "b-2": "صحيح مسلم"}
     (base / "13.html.gz").unlink()  # unreadable -> slug
     assert {b["slug"]: b["title"] for b in meta_table(tmp_data)["books"]}["b-1"] == "b-1"
+
+
+def test_truncated_gz_is_skipped(tmp_data):
+    from unittest import mock
+    occ = pd.read_parquet(tmp_data / "occurrences.parquet")
+    pd.concat([occ, pd.DataFrame({"group_id": ["tk-8"], "hadith_id": [13], "book_slug": ["b-1"],
+                                  "numbering": ["9"]})]).to_parquet(tmp_data / "occurrences.parquet")
+    base = tmp_data / "raw/html/hadith"
+    base.mkdir(parents=True)
+    raw = gzip.compress(("<html>" + "x" * 5000 + "</html>").encode())
+    (base / "12.html.gz").write_bytes(raw[: len(raw) // 2])
+    with gzip.open(base / "13.html.gz", "wt", encoding="utf-8") as f:
+        f.write("<html/>")
+    rec = mock.Mock(book_title="صحيح البخاري")
+    with mock.patch("isnad.export_site.parse_hadith", return_value=rec):
+        books = {b["slug"]: b["title"] for b in meta_table(tmp_data)["books"]}
+    assert books["b-1"] == "صحيح البخاري"

@@ -8,6 +8,7 @@ import datetime
 import gzip
 import json
 import re
+import zlib
 from pathlib import Path
 
 import pandas as pd
@@ -74,13 +75,14 @@ def _str(v):
 
 def _page_title(d: Path, hadith_id: int):
     base = Path(d) / "raw" / "html" / "hadith"
+    bad = (OSError, EOFError, zlib.error, UnicodeDecodeError)
     try:
         with gzip.open(base / f"{hadith_id}.html.gz", "rt", encoding="utf-8") as f:
             html = f.read()
-    except OSError:
+    except bad:
         try:
             html = (base / f"{hadith_id}.html").read_text(encoding="utf-8")
-        except OSError:
+        except bad:
             return None
     try:
         return parse_hadith(html).book_title or None
