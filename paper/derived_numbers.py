@@ -29,9 +29,10 @@ tf = pd.read_parquet(f"{D}tuhfa.parquet")
 print("tuhfa entries", len(tf))
 
 # 2. Sound-chain controls: (student, teacher) pairs that no critic denies
-CONTROLS = [("Malik <- Nafi'", 5361, 6509), ("Nafi' <- Ibn Umar", 6509, 3807),
-            ("al-Zuhri <- Salim", 5917, 2249), ("Salim <- Ibn Umar", 2249, 3807),
-            ("Hisham <- Urwa", 6702, 4361), ("Urwa <- Aisha", 4361, 3026)]
+# The six negative controls used during resolver development (Task 8c).
+CONTROLS = [("Nafi' <- Ibn Umar", 6509, 3807), ("Urwa <- Aisha", 4361, 3026),
+            ("Hisham <- Urwa", 6702, 4361), ("Salim <- Ibn Umar", 2249, 3807),
+            ("al-Zuhri <- Abu Salama", 5917, 3745), ("al-A'mash <- Abu Wa'il", 2638, 2809)]
 s = pd.read_parquet(f"{D}edge_scores.parquet")
 dset = {(int(a), int(b)) for a, b in zip(den.student_id, den.teacher_id)}
 for label, st, te in CONTROLS:
@@ -40,26 +41,20 @@ for label, st, te in CONTROLS:
           "p_meet", round(float(e.p_meet.iloc[0]), 4) if len(e) else None,
           "verdicts", e.verdict.value_counts().to_dict())
 
-# 3. Date-conflict audit
+# 3. Date-conflict audit (century-adjusted diff since Task 7d)
 de = pd.read_csv(f"{D}date_errors.csv")
-ys = lambda v: [float(x) for x in str(v).split("|") if x not in ("", "nan")]  # noqa: E731
-de["mod100"] = [any(y == dy % 100 for y in ys(v)) for dy, v in zip(de.death_year, de.narrative_years)]
-de["small"] = [all(y < 10 for y in ys(v)) for v in de.narrative_years]
-print("date_errors rows", len(de), "diff==200", int((de["diff"] == 200).sum()),
-      "diff==100", int((de["diff"] == 100).sum()), "diff==300", int((de["diff"] == 300).sum()),
-      "diff multiple of 100", int((de["diff"] % 100 == 0).sum()))
-print("narrative year == structured year mod 100", int(de.mod100.sum()))
-print("rest with only single-digit narrative years", int((~de.mod100 & de.small).sum()))
-print("rest, other", int((~de.mod100 & ~de.small).sum()))
-print("diff 20-99", int(((de["diff"] >= 20) & (de["diff"] < 100)).sum()))
-mod_ids = set(de[de.mod100].rawi_id)
+print("date_errors rows", len(de), "diff 20-99", int(((de["diff"] >= 20) & (de["diff"] < 100)).sum()),
+      "diff >= 100", int((de["diff"] >= 100).sum()), "death_year > 400", int((de.death_year > 400).sum()))
 err = s[s.verdict == "data_error"]
 conf = set(err.teacher_id[err.conflict_t.astype(bool)]) | set(err.student_id[err.conflict_s.astype(bool)])
-print("six-book data_error rows", len(err), "distinct conflicted narrators", len(conf),
-      "of which mod100", len(conf & mod_ids))
-only = [((not ct) or t in mod_ids) and ((not cs) or st in mod_ids)
-        for t, st, ct, cs in zip(err.teacher_id, err.student_id, err.conflict_t, err.conflict_s)]
-print("data_error rows explained only by mod100 narrators", int(sum(only)))
+print("six-book data_error rows", len(err), "distinct conflicted narrators", len(conf))
+for name in ("weak_edges_labeled", "date_errors_labeled"):
+    try:
+        lab = pd.read_csv(f"{D}{name}.csv")
+        print(name, lab.label.value_counts().to_dict(),
+              lab.groupby(["label", "cause"]).size().to_dict() if "cause" in lab else "")
+    except FileNotFoundError:
+        print(name, "absent")
 r = pd.read_parquet(f"{D}rawi.parquet")
 print("narrators birth_year > death_year", int((r.birth_year > r.death_year).sum()))
 
@@ -107,11 +102,12 @@ for src in ("marasil", "tuhfa"):
               "chron@0.05", round(c05, 3), "chron@0.2", round(c20, 3), "text_excl", round(t, 3),
               "lift", round(t - c05, 3), "pairs gained", int(round((t - c05) * n)))
 
-# 7. Passive forms classed as explicit by the root-prefix rule
+# 7. Passive forms (classed ambiguous since Task 7d)
 from isnad.dates import _norm  # noqa: E402
 
 nt = s.term.dropna().map(lambda t: " ".join(_norm(str(t)).split()))
 passive = nt.str.match(r"^(حدثت|اخبرت|انبئت)(\s|$)")
+print("term classes", s.term.map(classify_term).value_counts(dropna=False).to_dict())
 print("passive-form edge rows", int(passive.sum()),
       "terms", s.term.dropna()[passive].value_counts().head(8).to_dict())
 
