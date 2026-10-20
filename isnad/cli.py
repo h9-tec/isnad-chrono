@@ -1,4 +1,4 @@
-"""CLI: python -m isnad.cli <fetch|build|chains|gold|score|validate|report|export> ..."""
+"""CLI: python -m isnad.cli <fetch|build|chains|groups|dating|gold|score|validate|report|export> ..."""
 
 import argparse
 
@@ -76,6 +76,13 @@ def main(argv=None) -> None:
     rp.add_argument("--db", dest="report_db", default=DB)
     rp.add_argument("--out-dir", default="data")
     rp.add_argument("--n", type=int, default=50)
+    dp = top.add_parser("dating", help="narrator dating by difference-constraint propagation")
+    dp.add_argument("--chains", default="data/chains.parquet")
+    dp.add_argument("--rawi", default="data/rawi.parquet")
+    dp.add_argument("--out", default="data/rawi_dates_inferred.parquet")
+    dp.add_argument("--dropped", default="data/dropped_links.parquet")
+    dp.add_argument("--holdout", default="data/checks_dating.json")
+    dp.add_argument("--folds", type=int, default=5)
     ep = top.add_parser("export")
     ep.add_argument("--data-dir", default="data")
     ep.add_argument("--out", default="release")
@@ -106,6 +113,16 @@ def main(argv=None) -> None:
             for rel, c in rels.items():
                 print(src, rel, {k: c[k] for k in ("n", "auroc", "recall@0.05", "n_in_corpus",
                                                    "text_recall_in_corpus_excl_denial")})
+        return
+
+    if args.cmd == "dating":
+        from isnad import dating
+        m = dating.run_dating(args.chains, args.rawi, args.out, args.dropped, args.holdout,
+                              folds=args.folds)
+        print(m["run"])
+        for key in ("method", "method_bounded", "method_no_birth", "depth", "generation",
+                    "generation_mean"):
+            print(key, m[key])
         return
 
     if args.cmd == "chains":

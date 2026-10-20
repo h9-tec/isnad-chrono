@@ -69,3 +69,13 @@ AMBIGUOUS_EXACT = {"في حكم العنعنه", "قيل"}  # في حكم الع
 # Checked before the explicit roots; "<explicit root> عن" is handled in classify_term.
 PASSIVE_EXACT = {"اخبرت", "نبئت", "انبئت"}
 PASSIVE_PREFIXES = ("حدثت عن", "حدثت ان", "اخبرت عن", "اخبرت ان", "نبئت", "انبئت")
+
+# Narrator dating by difference constraints (isnad.dating)
+MAX_ITER = 50  # propagation rounds per pass
+HOLDOUT_FOLDS = 5
+DATE_K = 2  # known date interval = year +- DATE_K * max(sd, 1)
+YEAR_LO, YEAR_HI = 0, 1500  # prior bounds (AH) for unknown birth/death
+# Unknown births may precede the Hijra (early Companions died before 20 AH: 82 recorded deaths
+# < 20), so the birth prior opens AGE_MAX years below YEAR_LO; with [0, 1500] those deaths would
+# be infeasible before any link is read.
+BIRTH_LO = YEAR_LO - AGE_MAX
