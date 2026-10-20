@@ -1,7 +1,7 @@
 // Narrator page: narrator.html?id=N (or ?q=name for a search, nothing for the index).
 (function () {
   "use strict";
-  const { esc, int, range, narratorLink, groupLink, sortableTable } = window.ISNADUI;
+  const { esc, int, range, chains, narratorLink, groupLink, sortableTable } = window.ISNADUI;
   const main = document.getElementById("narrator");
   const form = document.getElementById("narrator-form");
   const input = document.getElementById("nq");
@@ -21,8 +21,10 @@
   }
   function recorded(y, k) {
     if (y == null) return '<span class="muted">غير مسجلة</span>';
-    const kind = KIND[k] ?? k;
-    return `${esc(y)} هـ${kind ? ` <span class="muted">(${esc(kind)}${k && k !== "exact" ? ` · ${esc(k)}` : ""})</span>` : ""}`;
+    // Arabic kind first, then the year; the English kind isolated (bidi-safe).
+    const ar = k && k !== "exact" && k !== "none" ? KIND[k] ?? "" : "";
+    const en = k && k !== "none" ? ` <span class="en">${esc(k)}</span>` : "";
+    return `${ar ? `${esc(ar)} ` : ""}<bdi>${esc(y)}</bdi> هـ${en}`;
   }
 
   // ---------- index / search ----------
@@ -72,46 +74,68 @@
 
   // ---------- timeline ----------
 
+  // Axis clamp (AH): prior-only and other near-unbounded intervals would otherwise
+  // stretch the axis to ~1500 and squash every real date into a few pixels.
+  const CLAMP = [-60, 400];
+
   function timeline(n, el) {
-    const xs = [n.blo, n.dlo, n.by, n.dy, n.bhi, n.dhi].filter((v) => v != null);
-    if (!xs.length) return '<p class="muted">لا توجد تواريخ.</p>';
-    const lo = Math.min(...[n.blo, n.dlo, n.by, n.dy].filter((v) => v != null)) - 10;
-    const hi = Math.max(...[n.bhi, n.dhi, n.dy, n.by].filter((v) => v != null)) + 10;
+    const lows = [n.blo, n.dlo, n.by, n.dy].filter((v) => v != null);
+    const highs = [n.bhi, n.dhi, n.dy, n.by].filter((v) => v != null);
+    if (!lows.length || !highs.length) return '<p class="muted">لا توجد تواريخ.</p>';
+    const lo = Math.max(CLAMP[0], Math.min(...lows) - 10);
+    const hi = Math.min(CLAMP[1], Math.max(...highs) + 10);
     const W = Math.max(280, Math.min((el && el.clientWidth) || 600, 1100));
-    const H = 150;
-    const pad = { l: 16, r: 16 };
-    const x = d3.scaleLinear().domain([lo, hi]).range([pad.l, W - pad.r]).nice();
+    const H = 176;
+    const pad = { l: 22, r: 22 };
+    const x = d3.scaleLinear().domain([lo, Math.max(hi, lo + 20)]).nice();
+    const [d0, d1] = x.domain();
+    x.domain([Math.max(CLAMP[0], d0), Math.min(CLAMP[1], d1)]).range([pad.l, W - pad.r]);
+    const [e0, e1] = x.domain();
+    const cx = (v) => x(Math.max(e0, Math.min(e1, v)));
     const svg = d3.create("svg").attr("class", "timeline").attr("viewBox", `0 0 ${W} ${H}`)
       .attr("width", "100%").attr("role", "img")
       .attr("aria-label", `الولادة المقدرة ${n.blo ?? "?"}–${n.bhi ?? "?"}، الوفاة المقدرة ${n.dlo ?? "?"}–${n.dhi ?? "?"} هـ`);
     const faint = n.method === "prior_only";
     const rows = [
-      { y: 38, label: "الولادة", en: "birth", lo: n.blo, hi: n.bhi, rec: n.by, kind: n.bk, cls: "birth" },
-      { y: 86, label: "الوفاة", en: "death", lo: n.dlo, hi: n.dhi, rec: n.dy, kind: n.dk, cls: "death" },
+      { y: 44, label: "الولادة", en: "birth", lo: n.blo, hi: n.bhi, rec: n.by, kind: n.bk, cls: "birth" },
+      { y: 112, label: "الوفاة", en: "death", lo: n.dlo, hi: n.dhi, rec: n.dy, kind: n.dk, cls: "death" },
     ];
     for (const r of rows) {
       const g = svg.append("g").attr("class", `row ${r.cls}`);
-      g.append("text").attr("class", "row-label").attr("x", W - pad.r).attr("y", r.y - 13)
+      g.append("text").attr("class", "row-label").attr("x", W - pad.r).attr("y", r.y - 20)
         .attr("text-anchor", "end").text(`${r.label} · ${r.en}`);
       if (r.lo != null && r.hi != null) {
-        const x0 = x(r.lo);
-        const w = Math.max(3, x(r.hi) - x0);
+        const x0 = cx(r.lo);
+        const x1 = Math.max(x0 + 3, cx(r.hi));
+        const cutL = r.lo < e0;
+        const cutR = r.hi > e1;
         g.append("rect").attr("class", `bar ${n.method || "unknown"}${faint ? " faint" : ""}`)
-          .attr("x", x0).attr("y", r.y - 7).attr("width", w).attr("height", 14).attr("rx", 3)
+          .attr("x", x0).attr("y", r.y - 7).attr("width", x1 - x0).attr("height", 14).attr("rx", 3)
           .append("title").text(`${r.label} المقدرة: ${r.lo}–${r.hi} هـ (${n.method})`);
+        // Arrowheads where the interval runs past the clamped axis.
+        if (cutL) g.append("path").attr("class", "cut").attr("d", `M${x0 - 10},${r.y}L${x0},${r.y - 8}L${x0},${r.y + 8}Z`);
+        if (cutR) g.append("path").attr("class", "cut").attr("d", `M${x1 + 10},${r.y}L${x1},${r.y - 8}L${x1},${r.y + 8}Z`);
+        // True bounds as labels (even when the bar is cut at the edge).
+        const narrow = x1 - x0 < 48; // labels beside the bar ends, not centred on them
+        g.append("text").attr("class", "bound").attr("x", narrow && !cutL ? x0 - 3 : x0).attr("y", r.y + 20)
+          .attr("text-anchor", cutL ? "start" : narrow ? "end" : "middle").text(cutL ? `← ${r.lo}` : `${r.lo}`);
+        if (r.hi !== r.lo)
+          g.append("text").attr("class", "bound").attr("x", narrow && !cutR ? x1 + 3 : x1).attr("y", r.y + 20)
+            .attr("text-anchor", cutR ? "end" : narrow ? "start" : "middle").text(cutR ? `${r.hi} →` : `${r.hi}`);
       }
       if (r.rec != null) {
         g.append("circle").attr("class", `rec${r.kind === "exact" ? "" : " hollow"}`)
-          .attr("cx", x(r.rec)).attr("cy", r.y).attr("r", 6)
+          .attr("cx", cx(r.rec)).attr("cy", r.y).attr("r", 6)
           .append("title").text(`${r.label} المسجلة: ${r.rec} هـ (${r.kind || "?"})`);
       }
     }
-    svg.append("g").attr("class", "axis").attr("transform", `translate(0,${H - 38})`)
+    svg.append("g").attr("class", "axis").attr("transform", `translate(0,${H - 34})`)
       .call(d3.axisBottom(x).ticks(Math.max(3, Math.floor(W / 80))).tickFormat(d3.format("d")));
     svg.append("text").attr("class", "axis-label").attr("x", W - pad.r).attr("y", H - 2).attr("text-anchor", "end").text("AH · سنة هجرية");
     return `<div class="timeline-wrap">${svg.node().outerHTML}</div>
       <p class="legend small"><span><i class="swatch ${esc(n.method)}"></i>مجال مقدر</span>
       <span><i class="pt"></i>سنة مسجلة (دقيقة)</span><span><i class="pt hollow"></i>مسجلة غير دقيقة (قبل/بعد/تقريبًا)</span>
+      <span>المحور مقصور على <bdi dir="ltr">${CLAMP[0]}…${CLAMP[1]}</bdi> هـ؛ السهم يعني أن المجال يتجاوزه</span>
       ${faint ? '<span class="muted">تقدير أولي: لم يصل إليه أي قيد من الأسانيد</span>' : ""}</p>`;
   }
 
@@ -121,7 +145,7 @@
     if (!pairs.length) return `<p class="muted">لا يوجد ${label}.</p>`;
     return `<ol class="people">${pairs
       .slice(0, TOP_N)
-      .map(([id, c]) => `<li>${narratorLink(id, nm)} <span class="muted small">${int(c)} سند</span></li>`)
+      .map(([id, c]) => `<li>${narratorLink(id, nm)} <span class="muted small">${chains(c)}</span></li>`)
       .join("")}</ol>`;
   }
 
@@ -153,12 +177,21 @@
     facts.push(`<dt>الطبقة</dt><dd>${n.gen != null ? esc(n.gen) : '<span class="muted">—</span>'}</dd>`);
     facts.push(`<dt>الوفاة المسجلة</dt><dd>${recorded(n.dy, n.dk)}</dd>`);
     facts.push(`<dt>الولادة المسجلة</dt><dd>${recorded(n.by, n.bk)}</dd>`);
-    facts.push(`<dt>الوفاة المقدرة</dt><dd>${range(n.dlo, n.dhi)} هـ</dd>`);
-    facts.push(`<dt>الولادة المقدرة</dt><dd>${range(n.blo, n.bhi)} هـ</dd>`);
-    facts.push(`<dt>منهج التأريخ</dt><dd>${methodText(n.method)}</dd>`);
-    facts.push(`<dt>الدعم</dt><dd>${int(n.support)} <span class="muted small">صلة شيخ–تلميذ باقية</span></dd>`);
+    // Placeholder ids merge every unnamed narrator into one node: their inferred
+    // dates and support describe no single person, so they are not shown.
+    const ph = !!n.placeholder;
+    if (!ph) {
+      facts.push(`<dt>الوفاة المقدرة</dt><dd>${range(n.dlo, n.dhi)} هـ</dd>`);
+      facts.push(`<dt>الولادة المقدرة</dt><dd>${range(n.blo, n.bhi)} هـ</dd>`);
+      facts.push(`<dt>منهج التأريخ</dt><dd>${methodText(n.method)}</dd>`);
+      facts.push(`<dt>الدعم</dt><dd>${int(n.support)} <span class="muted small">صلة شيخ–تلميذ باقية</span></dd>`);
+    }
     facts.push(`<dt>الأسانيد المارة به</dt><dd>${int(n.n_chains)}</dd>`);
-    const conflict = n.dy != null && n.dlo != null && n.dhi != null && (n.dy < n.dlo || n.dy > n.dhi);
+    const conflict = !ph && n.dy != null && n.dlo != null && n.dhi != null && (n.dy < n.dlo || n.dy > n.dhi);
+    const caveat = ph
+      ? `<p class="note placeholder-caveat">عقدة مدمجة لراوٍ غير مسمّى؛ التواريخ والروابط لا تدل على شخص واحد.
+         <span class="en">A merged node for unnamed narrators: its dates and links do not describe one person.</span></p>`
+      : "";
 
     const parts = [];
     parts.push(`<header class="nar-head"><h1>${esc(n.name)}</h1>
@@ -166,9 +199,10 @@
         ? '<p class="muted">راوٍ غير مسمى في الإسناد (لا صفحة له على hdith.com). <span class="en">Unnamed narrator.</span></p>'
         : `<p class="links"><span dir="ltr" class="muted">p-${id}</span> · <a href="${ISNAD.rawiUrl(id)}" rel="noopener">hdith.com</a></p>`}
       </header>`);
-    parts.push(`<div class="nar-grid"><section class="card"><h2>البيانات <span class="en">facts</span></h2><dl class="facts">${facts.join("")}</dl>
+    if (ph) parts.push(caveat);
+    parts.push(`<div class="nar-grid${ph ? " single" : ""}"><section class="card"><h2>البيانات <span class="en">facts</span></h2><dl class="facts">${facts.join("")}</dl>
       ${conflict ? `<p class="note">سنة الوفاة المسجلة (${esc(n.dy)}) خارج المجال المقدر من الأسانيد. <span class="en">Recorded death year lies outside the inferred interval.</span></p>` : ""}</section>
-      <section class="card"><h2>الخط الزمني <span class="en">timeline</span></h2><div id="timeline"></div></section></div>`);
+      ${ph ? "" : '<section class="card"><h2>الخط الزمني <span class="en">timeline</span></h2><div id="timeline"></div></section>'}</div>`);
 
     if (detErr) parts.push(`<p class="error">تعذر تحميل الصلات: ${esc(detErr.message)}</p>`);
     else if (!det) parts.push('<p class="muted card">لا صلات مسجلة لهذا الراوي. <span class="en">No links.</span></p>');
@@ -189,7 +223,7 @@
 
     main.innerHTML = parts.join("");
     const tl = document.getElementById("timeline");
-    tl.innerHTML = timeline(n, tl);
+    if (tl) tl.innerHTML = timeline(n, tl);
     if (d.cl_groups.length) {
       const num = (gid) => Number(String(gid).split("-").pop());
       document.getElementById("cl-table").appendChild(

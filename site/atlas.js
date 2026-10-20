@@ -7,6 +7,7 @@
   const sumEl = document.getElementById("hist-sum");
   const driftEl = document.getElementById("drift");
   const short = d3.format("~s");
+  const MIN_N = 30;
 
   function width(el) {
     return Math.max(300, Math.min(el.clientWidth || 900, 1200));
@@ -18,21 +19,12 @@
     const W = width(histEl);
     const H = 280;
     const m = { t: 12, r: 16, b: 40, l: 52 };
-    // Same year axis for every compiler so the filters compare.
-    // The axis ends at the bin holding 99% of all groups; the sparse tail is
-    // counted in the summary line instead of stretching the axis.
+    // Same year axis for every compiler so the filters compare; the export keeps
+    // only bounded intervals (cl_hist_excluded counts the rest).
     const x0 = d3.min(all, (d) => d[0]) ?? 0;
-    const total = d3.sum(all, (d) => d[1]);
-    let acc = 0;
-    let cut = x0;
-    for (const [b, c] of all) {
-      cut = b;
-      acc += c;
-      if (acc >= total * 0.99) break;
-    }
-    const x1 = cut + 10;
-    const tail = data.filter((d) => d[0] >= x1);
-    data = data.filter((d) => d[0] < x1);
+    const x1 = (d3.max(all, (d) => d[0]) ?? 0) + 10;
+    const tail = data.filter((d) => d[0] >= x1 || d[0] < x0);
+    data = data.filter((d) => d[0] < x1 && d[0] >= x0);
     const x = d3.scaleLinear().domain([x0, x1]).range([m.l, W - m.r]);
     const y = d3.scaleLinear().domain([0, d3.max(data, (d) => d[1]) || 1]).nice().range([H - m.b, m.t]);
     const svg = d3.create("svg").attr("viewBox", `0 0 ${W} ${H}`).attr("width", "100%")
@@ -49,24 +41,38 @@
     svg.append("text").attr("class", "axis-label").attr("x", W / 2).attr("y", H - 4).attr("text-anchor", "middle")
       .text("سنة الوفاة المقدرة (هـ) · inferred death year AH");
     histEl.replaceChildren(svg.node());
+    const ex = atlas.cl_hist_excluded;
+    document.getElementById("hist-excl").innerHTML = ex
+      ? `خارج الرسم: ${int(ex.unbounded)} حلقة مجالها أوسع من 300 سنة، و${int(ex.prior_only)} مؤرخة بالتقدير الأولي وحده (كل الكتب).
+         <span class="en">Not counted: ${int(ex.unbounded)} common links with an interval wider than 300 years and ${int(ex.prior_only)} dated by the prior alone (all books).</span>`
+      : "";
     const nTail = d3.sum(tail, (d) => d[1]);
     const n = d3.sum(data, (d) => d[1]) + nTail;
     const peak = data.reduce((a, b) => (b[1] > (a ? a[1] : -1) ? b : a), null);
     sumEl.innerHTML = n
-      ? `${esc(title)}: ${int(n)} مجموعة لها حلقة مشتركة مؤرخة${peak ? `؛ الذروة <bdi dir="ltr">${peak[0]}–${peak[0] + 9}</bdi> هـ (${int(peak[1])})` : ""}.
-${nTail ? ` منها ${int(nTail)} بعد ${x1} هـ (خارج الرسم).` : ""}
-         <span class="en">${int(n)} groups with a dated k2 common link${nTail ? `; ${int(nTail)} after ${x1} AH are not drawn` : ""}.</span>`
+      ? `${esc(title)}: ${int(n)} مجموعة لها حلقة مشتركة مؤرخة${peak ? `؛ الذروة <bdi dir="ltr">${int(peak[0])}–${int(peak[0] + 9)}</bdi> هـ (${int(peak[1])})` : ""}.
+${nTail ? ` منها ${int(nTail)} بعد ${int(x1)} هـ (خارج الرسم).` : ""}
+         <span class="en">${int(n)} groups with a dated k2 common link${nTail ? `; ${int(nTail)} after ${int(x1)} AH are not drawn` : ""}.</span>`
       : `${esc(title)}: لا مجموعات.`;
   }
 
   function drawDrift(drift) {
     const rows = drift.filter((r) => r.rate != null);
+    if (!rows.length) {
+      driftEl.innerHTML = '<p class="muted">لا بيانات. <span class="en">No data.</span></p>';
+      return;
+    }
+    // Depths with fewer than MIN_N transmissions are drawn hollow, off the line,
+    // and do not set the y scale (a rate of 2/2 is not a trend).
+    const solid = (r) => r.n_transmissions >= MIN_N;
     const W = width(driftEl);
     const H = 300;
     const m = { t: 16, r: 20, b: 58, l: 52 };
-    const x = d3.scaleLinear().domain(d3.extent(rows, (r) => r.depth)).range([m.l, W - m.r]);
-    const y = d3.scaleLinear().domain([0, d3.max(rows, (r) => Math.max(r.rate, r.rate_nonleaf ?? 0)) || 1]).nice()
-      .range([H - m.b, m.t]);
+    const [dx0, dx1] = d3.extent(rows, (r) => r.depth);
+    const x = d3.scaleLinear().domain(dx0 === dx1 ? [dx0 - 1, dx1 + 1] : [dx0, dx1]).range([m.l, W - m.r]);
+    const ymax = d3.max(rows.filter(solid), (r) => Math.max(r.rate, r.rate_nonleaf ?? 0)) || 0;
+    const y = d3.scaleLinear().domain([0, ymax > 0 ? ymax : 1]).nice().range([H - m.b, m.t]);
+    const top = y.domain()[1];
     const svg = d3.create("svg").attr("viewBox", `0 0 ${W} ${H}`).attr("width", "100%")
       .attr("role", "img").attr("aria-label", "معدل تغييرات اللفظ لكل نقل حسب العمق");
     svg.append("g").attr("class", "grid").attr("transform", `translate(${m.l},0)`)
@@ -89,10 +95,11 @@ ${nTail ? ` منها ${int(nTail)} بعد ${x1} هـ (خارج الرسم).` : "
     ];
     for (const s of series) {
       const pts = rows.filter((r) => r[s.key] != null);
-      svg.append("path").datum(pts).attr("class", `line ${s.cls}`)
+      svg.append("path").datum(pts.filter(solid)).attr("class", `line ${s.cls}`)
         .attr("d", d3.line().x((r) => x(r.depth)).y((r) => y(r[s.key])));
-      svg.append("g").selectAll("circle").data(pts).join("circle").attr("class", `pt ${s.cls}`)
-        .attr("cx", (r) => x(r.depth)).attr("cy", (r) => y(r[s.key])).attr("r", 3.5)
+      svg.append("g").selectAll("circle").data(pts).join("circle")
+        .attr("class", (r) => `pt ${s.cls}${solid(r) ? "" : " hollow"}`)
+        .attr("cx", (r) => x(r.depth)).attr("cy", (r) => y(Math.min(r[s.key], top))).attr("r", 3.5)
         .append("title").text((r) => `العمق ${r.depth}: ${(r[s.key] * 100).toFixed(2)}% (${s.key === "rate" ? r.n_edits : r.n_edits_nonleaf} / ${r.n_transmissions})`);
     }
     const lg = svg.append("g").attr("class", "chart-legend").attr("transform", `translate(${m.l + 12},${m.t + 6})`);

@@ -24,6 +24,7 @@ from isnad import export_hf
 from isnad.constants import K_CL
 from isnad.edits import RATED, STATUSES
 from isnad.parse_hadith import parse_hadith
+from isnad import dating
 from isnad.dating import clean_chain_rows
 
 log = logging.getLogger(__name__)
@@ -436,18 +437,28 @@ def narrator_detail(rawi_id: int, ctx: SiteContext) -> dict:
 
 def atlas_table(ctx: SiteContext) -> dict:
     hist: dict[str, Counter] = {"all": Counter()}
+    excluded = {"prior_only": 0, "unbounded": 0}
     earliest = []
     for g in ctx.group_ids:
         row = ctx.chosen_cl(g).get(2)
-        if row is None or _str(row["cl_k2_date_method"]) == "prior_only":
+        if row is None:
+            continue
+        if _str(row["cl_k2_date_method"]) == "prior_only":
+            excluded["prior_only"] += 1
             continue
         lo, hi = _floor(row["cl_k2_date_lo"]), _ceil(row["cl_k2_date_hi"])
         if lo is None or hi is None:
             continue
-        b = ((lo + hi) // 2) // 10 * 10
-        hist["all"][b] += 1
-        for slug in ctx.books.get(g, {}):
-            hist.setdefault(slug, Counter())[b] += 1
+        # The histogram takes only bounded intervals (as the release's cl_k2_bounded_rate):
+        # the midpoint of a near-unbounded interval is not a date.
+        bounded = float(row["cl_k2_date_hi"]) - float(row["cl_k2_date_lo"]) <= dating.BOUNDED_WIDTH
+        if bounded:
+            b = ((lo + hi) // 2) // 10 * 10
+            hist["all"][b] += 1
+            for slug in ctx.books.get(g, {}):
+                hist.setdefault(slug, Counter())[b] += 1
+        else:
+            excluded["unbounded"] += 1
         if int(row["cl_k2_id"]) not in PLACEHOLDER_IDS:  # boards skip placeholders
             earliest.append([g, int(row["cl_k2_id"]), lo, hi])
     cl_hist = {s: [[int(b), int(n)] for b, n in sorted(c.items())]
@@ -470,7 +481,7 @@ def atlas_table(ctx: SiteContext) -> dict:
 
     drift = [{c: (_rate(v) if c.startswith("rate") else _int(v)) for c, v in row.items()}
              for row in ctx.rates.to_dict("records")]
-    return {"cl_hist": cl_hist, "drift": drift,
+    return {"cl_hist": cl_hist, "cl_hist_excluded": excluded, "drift": drift,
             "boards": {"top_cls": _top(top_cls, BOARD_N), "earliest": earliest[:BOARD_N],
                        "conflicts": conflicts, "top_editors": top_editors}}
 

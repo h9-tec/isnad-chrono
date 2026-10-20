@@ -152,3 +152,21 @@ def test_explorer_selects_within_component():
     js = (SITE / "explorer.js").read_text()
     assert "function selectNode(d, comp)" in js
     assert "for (const c of state.layout.components)" not in js
+
+
+def test_fix_round_1_strings():
+    common = (SITE / "common.js").read_text()
+    assert "`<span class=\"ph\" dir=\"ltr\">p-${esc(id)}</span>`" in common  # unknown-id fallback
+    assert "createCaption().textContent" in common and "أسانيد" in common
+    assert "narratorLink" in (SITE / "boards.js").read_text()
+    nar = (SITE / "narrator.js").read_text()
+    assert "e.status === 404" in nar and "No links." in nar
+    assert "const CLAMP = [-60, 400]" in nar and 'class", "cut"' in nar
+    assert "عقدة مدمجة لراوٍ غير مسمّى؛ التواريخ والروابط لا تدل على شخص واحد" in nar
+    atlas = (SITE / "atlas.js").read_text()
+    assert "cl_hist_excluded" in atlas and "MIN_N = 30" in atlas and "hollow" in atlas
+    for page in ("atlas.html", "method.html"):
+        html = (SITE / page).read_text()
+        for td in re.findall(r'<td class="num">(.*?)</td>', html):
+            if " / " in td:
+                assert td.startswith('<bdi dir="ltr">'), (page, td)

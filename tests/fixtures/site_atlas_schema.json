@@ -4,6 +4,7 @@
   "type": "object",
   "required": [
     "cl_hist",
+    "cl_hist_excluded",
     "drift",
     "boards"
   ],
@@ -28,6 +29,24 @@
               "type": "integer"
             }
           ]
+        }
+      }
+    },
+    "cl_hist_excluded": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "prior_only",
+        "unbounded"
+      ],
+      "properties": {
+        "prior_only": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "unbounded": {
+          "type": "integer",
+          "minimum": 0
         }
       }
     },

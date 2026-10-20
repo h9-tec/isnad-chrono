@@ -279,6 +279,7 @@ def test_narrator_detail_written_for_every_chain_narrator(site_data, tmp_path):
 def test_atlas(site_data):
     a = atlas_table(SiteContext(site_data))
     assert a["cl_hist"] == {"all": [[100, 1]], "b-1": [[100, 1]], "b-2": [[100, 1]]}
+    assert a["cl_hist_excluded"] == {"prior_only": 0, "unbounded": 0}
     assert a["drift"][1] == {"depth": 1, "n_transmissions": 3, "n_edits": 1, "rate": 0.3333,
                              "n_edits_nonleaf": 1, "rate_nonleaf": 0.3333}
     assert a["drift"][0]["rate"] is None
@@ -313,6 +314,19 @@ def test_atlas_skips_prior_only(site_data):
     rd.to_parquet(site_data / "report_dates.parquet")
     a = atlas_table(SiteContext(site_data))
     assert a["cl_hist"] == {"all": []} and a["boards"]["earliest"] == []
+    assert a["cl_hist_excluded"]["prior_only"] >= 1
+
+
+def test_atlas_hist_skips_unbounded(site_data):
+    rd = pd.read_parquet(site_data / "report_dates.parquet")
+    rd["cl_k2_date_lo"] = rd.cl_k2_date_lo - 400  # width > dating.BOUNDED_WIDTH
+    rd.to_parquet(site_data / "report_dates.parquet")
+    a = atlas_table(SiteContext(site_data))
+    assert a["cl_hist"] == {"all": []}
+    assert a["cl_hist_excluded"] == {"prior_only": 0, "unbounded": 1}
+    jsonschema.validate(a, _schema("atlas"))
+    s = json.loads(Path("tests/fixtures/site_atlas_schema.json").read_text(encoding="utf-8"))
+    assert set(s["properties"]["cl_hist_excluded"]["required"]) == {"prior_only", "unbounded"}
 
 
 def test_shard_paths():

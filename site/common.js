@@ -13,7 +13,13 @@
 
   // "lo–hi" inside an LTR isolate so RTL text does not flip the range.
   function range(lo, hi) {
-    return `<bdi dir="ltr">${lo ?? "?"}–${hi ?? "?"}</bdi>`;
+    return `<bdi dir="ltr">${esc(lo ?? "?")}–${esc(hi ?? "?")}</bdi>`;
+  }
+
+  // "n سند" with the plural أسانيد for 3–10 (Arabic counted-noun rule, simplified).
+  function chains(n) {
+    const k = Number(n);
+    return `${int(k)} ${k >= 3 && k <= 10 ? "أسانيد" : "سند"}`;
   }
 
   // Check values: data-fmt="pct" (rate -> %), "int", "years" (1 decimal), default 3 decimals.
@@ -64,7 +70,7 @@
     wrap.className = "table-wrap";
     const table = document.createElement("table");
     table.className = "board";
-    if (opts.caption) table.createCaption().innerHTML = opts.caption;
+    if (opts.caption) table.createCaption().textContent = opts.caption;
     const thead = table.createTHead().insertRow();
     const tbody = table.createTBody();
     let sortCol = opts.sortCol ?? -1;
@@ -110,7 +116,7 @@
     return wrap;
   }
 
-  window.ISNADUI = { esc, int, range, fmtCheck, fillChecks, narratorName, narratorLink, groupLink, sortableTable };
+  window.ISNADUI = { esc, int, range, chains, fmtCheck, fillChecks, narratorName, narratorLink, groupLink, sortableTable };
 
   // Pages with [data-check] spans and no own script fill them here.
   if (typeof document !== "undefined" && document.body && document.body.dataset.checks === "auto") {

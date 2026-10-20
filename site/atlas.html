@@ -32,16 +32,17 @@
           <select id="book"><option value="all">كل الكتب</option></select>
         </label>
       </div>
-      <p class="small muted">لكل مجموعة لها حلقة مشتركة k2: منتصف مجال وفاتها المقدر، في فئات من عشر سنوات (دون المؤرخة بالتقدير الأولي وحده). يُحسب الحديث في كتاب إذا كان له موضع فيه.
-        <span class="en">Midpoint of the inferred death interval of each group's k2 common link, binned by 10 years (prior-only dates excluded); a group counts for a book when it has an occurrence there.</span></p>
+      <p class="small muted">لكل مجموعة لها حلقة مشتركة k2: منتصف مجال وفاتها المقدر، في فئات من عشر سنوات (دون المؤرخة بالتقدير الأولي وحده ودون المجالات الأوسع من 300 سنة). يُحسب الحديث في كتاب إذا كان له موضع فيه.
+        <span class="en">Midpoint of the inferred death interval of each group's k2 common link, binned by 10 years (prior-only and unbounded intervals, wider than 300 years, excluded); a group counts for a book when it has an occurrence there.</span></p>
       <div id="hist" class="chart" aria-live="polite"></div>
       <p id="hist-sum" class="small muted"></p>
+      <p id="hist-excl" class="small muted"></p>
     </section>
 
     <section class="card">
       <h2>انحراف اللفظ عبر الطبقات <span class="en">edit rate per generation depth</span></h2>
-      <p class="small muted">التغييرات المنسوبة (attributed و ambiguous) لكل نقل، حسب عمق الراوي من الصحابي. الخط المتقطع يستبعد التغييرات التي ينفرد بها المصنف (leaf).
-        <span class="en">Attributed + ambiguous edits per transmission by depth from the Companion; the dashed line excludes single-witness edits at the compiler. Depth 0 has no transmission and is not drawn.</span></p>
+      <p class="small muted">التغييرات المنسوبة (attributed و ambiguous) لكل نقل، حسب عمق الراوي من الصحابي. الخط المتقطع يستبعد التغييرات التي ينفرد بها المصنف (leaf). النقاط المفرغة: أقل من 30 نقلًا.
+        <span class="en">Attributed + ambiguous edits per transmission by depth from the Companion; the dashed line excludes single-witness edits at the compiler. Depth 0 has no transmission and is not drawn. Hollow points: fewer than 30 transmissions, off the line and clamped to the top of the scale.</span></p>
       <div id="drift" class="chart"></div>
       <div id="drift-table"></div>
     </section>
@@ -62,10 +63,10 @@
           <tr><th>حلقة مشتركة k3 (من متعددة الأسانيد) <span class="en">k3 CL rate, multi-chain groups</span></th><td class="num"><span data-check="cl_k3_rate_multi" data-fmt="pct"></span></td></tr>
           <tr><th>حلقات k2 مؤرخة بالتقدير الأولي وحده <span class="en">k2 CLs dated by the prior only</span></th><td class="num"><span data-check="cl_k2_prior_only_rate" data-fmt="pct"></span></td></tr>
           <tr><th>الرواة <span class="en">narrators</span></th><td class="num"><span data-check="coverage_n_narrators" data-fmt="int"></span></td></tr>
-          <tr><th>خطأ التأريخ الوسيط: الانتشار مقابل عمق السند <span class="en">dating median abs. error (years): propagation vs depth baseline</span></th><td class="num"><span data-check="dating_method_median_abs_error" data-fmt="years"></span> / <span data-check="dating_depth_median_abs_error" data-fmt="years"></span></td></tr>
-          <tr><th>خطأ التأريخ المتوسط: الانتشار مقابل عمق السند <span class="en">dating mean abs. error (years): propagation vs depth baseline</span></th><td class="num"><span data-check="dating_method_mean_abs_error" data-fmt="years"></span> / <span data-check="dating_depth_mean_abs_error" data-fmt="years"></span></td></tr>
+          <tr><th>خطأ التأريخ الوسيط: الانتشار مقابل عمق السند <span class="en">dating median abs. error (years): propagation vs depth baseline</span></th><td class="num"><bdi dir="ltr"><span data-check="dating_method_median_abs_error" data-fmt="years"></span> / <span data-check="dating_depth_median_abs_error" data-fmt="years"></span></bdi></td></tr>
+          <tr><th>خطأ التأريخ المتوسط: الانتشار مقابل عمق السند <span class="en">dating mean abs. error (years): propagation vs depth baseline</span></th><td class="num"><bdi dir="ltr"><span data-check="dating_method_mean_abs_error" data-fmt="years"></span> / <span data-check="dating_depth_mean_abs_error" data-fmt="years"></span></bdi></td></tr>
           <tr><th>تغطية مجال 90٪ <span class="en">90% interval coverage</span></th><td class="num"><span data-check="dating_method_coverage_90" data-fmt="pct"></span></td></tr>
-          <tr><th>وجود لفظ الاختلاف في نص حامله مقابل الضابط <span class="en">variant wording found in carrier vs control</span></th><td class="num"><span data-check="alignment_surface_found_rate" data-fmt="pct"></span> / <span data-check="alignment_control_surface_found_rate" data-fmt="pct"></span></td></tr>
+          <tr><th>وجود لفظ الاختلاف في نص حامله مقابل الضابط <span class="en">variant wording found in carrier vs control</span></th><td class="num"><bdi dir="ltr"><span data-check="alignment_surface_found_rate" data-fmt="pct"></span> / <span data-check="alignment_control_surface_found_rate" data-fmt="pct"></span></bdi></td></tr>
           <tr><th>تغييرات اللفظ <span class="en">edit rows</span></th><td class="num"><span data-check="coverage_n_edits" data-fmt="int"></span></td></tr>
         </tbody>
       </table>
