@@ -47,6 +47,8 @@ def main(argv=None) -> None:
     gp.add_argument("--rawi", default="data/rawi.parquet")
     gp.add_argument("--tuhfa", default="data/tuhfa.parquet")
     gp.add_argument("--marasil", default="gold/marasil_pairs.json")
+    gp.add_argument("--tuhfa-frame",
+                    help="re-resolve this existing denials_tuhfa parquet; skips the LLM runner")
     gp.add_argument("--out-dir", default="data")
     vp = top.add_parser("validate")
     vp.add_argument("--scores", default="data/edge_scores.parquet")
@@ -97,7 +99,8 @@ def main(argv=None) -> None:
 
     if args.cmd == "gold":
         from isnad import gold
-        gold.run_gold(args.rawi, args.tuhfa, args.marasil, args.out_dir)
+        gold.run_gold(args.rawi, args.tuhfa, args.marasil, args.out_dir,
+                      tuhfa_frame=args.tuhfa_frame)
         return
 
     if args.cmd == "score":

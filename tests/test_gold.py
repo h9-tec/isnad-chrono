@@ -50,7 +50,8 @@ def test_marasil_denials_shape(tmp_path):
     f.write_text(json.dumps(pairs, ensure_ascii=False), encoding="utf-8")
     df = gold.marasil_denials(_idx(tmp_path), f)
     assert list(df.columns) == ["student", "teacher", "student_id", "teacher_id", "relation",
-                                "authority", "resolved", "ambiguous", "method"]
+                                "authority", "resolved", "ambiguous", "method",
+                                "relation_scope"]
     assert len(df) == 2 and df["resolved"].tolist() == [True, False]
     assert gold.denial_set([df]) == {(1, 2)}
 
@@ -72,7 +73,7 @@ def test_tuhfa_fake_runner(tmp_path):
     df = gold.tuhfa_denials(t, _idx(tmp_path), runner=fake)
     assert len(prompts) == 1 and "### 1" in prompts[0]
     assert list(df.columns) == ["student_id", "teacher", "teacher_id", "relation", "quote",
-                                "resolved", "ambiguous", "method"]
+                                "resolved", "ambiguous", "method", "relation_scope"]
     assert len(df) == 2 and df["resolved"].all()
     assert gold.denial_set([df]) == {(1, 2)}
 
@@ -187,3 +188,90 @@ def test_run_gold_prints_method_breakdown(tmp_path, capsys):
     gold.run_gold(rawi, t, m, tmp_path, runner=lambda p: "")
     out = capsys.readouterr().out
     assert "marasil methods {'relation': 0, 'prior': 1, 'ambiguous': 0, 'none': 0}" in out
+
+
+def test_tokens_keep_ibn_abu_umm():
+    assert gold.tokens("عبد الله بن عمر") == ["عبد", "الله", "عمر"]
+    assert gold.tokens("ابن عمر بن الخطاب") == ["ابن", "عمر", "الخطاب"]
+    assert gold.tokens("أبي الزبير") == ["ابو", "الزبير"]
+    assert gold.tokens("أبا هريرة") == ["ابو", "هريره"]
+    assert gold.tokens("أم سليم") == ["ام", "سليم"]
+    assert gold.tokens("عائشة بنت أبي بكر") == ["عايشه", "بنت", "ابو", "بكر"]
+    assert gold.tokens("عن نافع") == ["نافع"]
+
+
+def test_caliph_umar_not_ibn_umar(tmp_path):
+    idx = _pidx(tmp_path, [
+        {**_frow(1, "عمر بن الخطاب", count=500), "name_forms": ["أبو حفص عمر"]},
+        {**_frow(2, "عبد الله بن عمر بن الخطاب", count=2000),
+         "name_forms": ["ابن عمر بن الخطاب", "ابن عمر"]},
+        _frow(3, "نافع", teachers=[2], count=900)])
+    assert idx.resolve("عمر بن الخطاب").rawi_id == 1
+    assert idx.resolve("ابن عمر").rawi_id == 2
+    r = gold.resolve_pair(idx, "نافع", "عمر بن الخطاب")
+    assert (r.student_id, r.teacher_id) == (3, 1)
+
+
+def test_kunya_query_requires_kunya_form(tmp_path):
+    idx = _pidx(tmp_path, [_frow(1, "الزبير بن بكار"), _frow(2, "ابن الزبير"),
+                           {**_frow(3, "محمد بن مسلم بن تدرس"), "name_forms": ["أبو الزبير"]}])
+    assert [c.rawi_id for c in idx.candidates("أبي الزبير")] == [3]
+    assert idx.resolve("أبو الزبير").rawi_id == 3
+
+
+def test_umm_sulaym_not_anas(tmp_path):
+    idx = _pidx(tmp_path, [{**_frow(1, "أنس بن مالك"), "name_forms": ["ابن أم سليم"]},
+                           {**_frow(2, "أم سليم بنت ملحان"), "name_forms": ["أم سليم"]}])
+    assert [c.rawi_id for c in idx.candidates("أم سليم")] == [2]
+    assert idx.resolve("ابن أم سليم").rawi_id == 1
+
+
+def test_specific_scope_excluded(tmp_path):
+    pairs = [{"student": "إبراهيم النخعي", "teacher": "أبو عبد الله الجدلي",
+              "relation": "no_sama", "authority": "a",
+              "quote": "لم يسمع هذا الحديث من أبي عبد الله الجدلي"},
+             {"student": "إبراهيم النخعي", "teacher": "شعبة", "relation": "no_sama",
+              "authority": "a", "quote": "لم يسمع من شعبة شيئا"}]
+    f = tmp_path / "m.json"
+    f.write_text(json.dumps(pairs, ensure_ascii=False), encoding="utf-8")
+    df = gold.marasil_denials(_idx(tmp_path), f)
+    assert df["relation_scope"].tolist() == ["specific", "pair"]
+    assert gold.denial_set([df]) == {(1, 3)}
+    assert gold.relation_scope("لم يسمع من أبيه حديث بسرة في مس الذكر") == "specific"
+    assert gold.relation_scope("من أبي عبد الله الجدلي حديث خزيمة بن ثابت في المسح") == "specific"
+    assert gold.relation_scope("حديثه عن علي في الجملة مرسل") == "pair"
+    assert gold.relation_scope(None) == "pair"
+
+
+def test_gold_tuhfa_frame_path(tmp_path):
+    rawi = _rawi(tmp_path, [_frow(1, "إبراهيم النخعي"), _frow(2, "شعبة"),
+                            {**_frow(3, "سعيد بن مسلم"), "name_forms": ["أبو سعيد"]}])
+    frame = tmp_path / "denials_tuhfa.parquet"
+    pd.DataFrame([
+        {"student_id": 1, "teacher": "شعبة", "teacher_id": 99, "relation": "no_sama",
+         "quote": "لم يسمع منه", "resolved": True, "ambiguous": False, "method": "x"},
+        {"student_id": 1, "teacher": "أبي سعيد", "teacher_id": None, "relation": "mursal",
+         "quote": "في هذا الحديث مرسل", "resolved": False, "ambiguous": False, "method": "x"},
+    ]).astype({"student_id": "Int64", "teacher_id": "Int64"}).to_parquet(frame)
+    m = tmp_path / "m.json"
+    m.write_text("[]", encoding="utf-8")
+
+    def boom(prompt):
+        raise AssertionError("runner must not be called")
+
+    df = gold.tuhfa_denials_from_frame(frame, gold.NameIndex.from_rawi(rawi))
+    assert df["teacher_id"].tolist() == [2, 3]
+    assert df["relation_scope"].tolist() == ["pair", "specific"]
+    out = tmp_path / "out"
+    out.mkdir()
+    gold.run_gold(rawi, None, m, out, runner=boom, tuhfa_frame=frame)
+    d = pd.read_parquet(out / "denials.parquet")
+    assert [(int(a), int(b)) for a, b in zip(d.student_id, d.teacher_id)] == [(1, 2)]
+    t = pd.read_parquet(out / "denials_tuhfa.parquet")
+    assert len(t) == 2 and "relation_scope" in t
+    from isnad import cli
+    out2 = tmp_path / "out2"
+    out2.mkdir()
+    cli.main(["gold", "--rawi", str(rawi), "--tuhfa-frame", str(frame), "--marasil", str(m),
+              "--out-dir", str(out2)])
+    assert len(pd.read_parquet(out2 / "denials.parquet")) == 1

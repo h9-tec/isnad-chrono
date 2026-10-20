@@ -16,7 +16,16 @@ DENY = {"no_sama", "mursal", "no_idrak"}
 RELATIONS = DENY | {"sama"}
 ACCEPT = 0.6
 _PROMPT = Path(__file__).resolve().parent.parent / "gold" / "tuhfa_prompt.txt"
-_DROP = {"بن", "ابو", "عن"}
+_DROP = {"بن", "عن"}
+# Kunya/nasab particles are kept as tokens: "عمر" and "ابن عمر" are different people.
+# They never count as name overlap on their own (see _score).
+_PARTICLES = frozenset({"ابن", "ابو", "ام"})
+# Quote markers of a hadith-specific statement ("did not hear THIS hadith from him").
+_SPECIFIC = re.compile("|".join(_norm(x) for x in (
+    # "حديث <1-3 words> في": a named hadith ("حديث خزيمه بن ثابت في المسح"); "حديثه عن X"
+    # (his hadith from X in general) has no space after حديث and stays pair-level.
+    "هذا الحديث", "هذه الاحاديث", r"حديث(?: [^ ]+){1,3} في", "حديثه هذا", "هذا الخبر",
+    "في هذا الحديث", "الحديث الذي")))
 MAX_CANDS = 25
 CHRONO_SLACK = 5  # teacher may die at most this many years after the student
 PRIOR_W = 0.1
@@ -30,9 +39,7 @@ _EPS = 1e-9
 def tokens(s) -> list[str]:
     if not s:
         return []
-    s = _norm(str(s))
-    s = re.sub(r"\bابن\b", "بن", s)
-    s = re.sub(r"\b(ابي|ابو)\b", "ابو", s)
+    s = re.sub(r"\b(ابي|ابا|ابو)\b", "ابو", _norm(str(s)))
     return [t for t in re.findall(r"[\w]+", s) if t not in _DROP]
 
 
@@ -90,14 +97,23 @@ def facts_from_frame(df: pd.DataFrame) -> dict[int, Facts]:
     return out
 
 
+def _head(t: list[str]) -> list[str]:
+    """First token, or particle + following token ("ابو هريره")."""
+    return t[:2] if t[0] in _PARTICLES else t[:1]
+
+
 def _score(q: list[str], c: list[str]) -> float:
     if not q or not c:
         return 0.0
-    qs, cs = set(q), set(c)
+    if q[0] in _PARTICLES and c[0] != q[0]:
+        return 0.0  # kunya/ibn query only matches forms led by the same particle
+    qs, cs = set(q) - _PARTICLES, set(c) - _PARTICLES
+    if not qs or not cs:
+        return 0.0
     overlap = len(qs & cs)
     extra = len(cs - qs)
     s = overlap / len(qs) - 0.15 * extra / len(cs)
-    if q[0] == c[0]:
+    if _head(q) == _head(c):
         s += 0.3
     return s
 
@@ -131,7 +147,8 @@ class NameIndex:
 
     def _scored(self, name) -> list[tuple[float, int]]:
         q = tokens(name)
-        cands = set().union(*(self.inv.get(t, set()) for t in set(q))) if q else set()
+        keys = set(q) - _PARTICLES  # particles alone can never reach ACCEPT
+        cands = set().union(*(self.inv.get(t, set()) for t in keys)) if keys else set()
         return sorted(
             ((max(_score(q, f) for f in self.forms[c]), c) for c in cands),
             key=lambda x: (-x[0], x[1]),
@@ -206,21 +223,47 @@ def _opt_int(ids) -> pd.Series:
     return pd.Series(ids, dtype="Int64")
 
 
+def relation_scope(quote) -> str:
+    """"specific" when the quote limits the statement to one hadith, else "pair"."""
+    if not isinstance(quote, str) or not quote:
+        return "pair"
+    q = " ".join(re.findall(r"[\w]+", _norm(quote)))
+    return "specific" if _SPECIFIC.search(q) else "pair"
+
+
+def recheck(index: NameIndex, frame: pd.DataFrame) -> pd.DataFrame:
+    """Re-resolve a denial frame's names and recompute its scope.
+
+    With a `student` column both names are resolved jointly (al-Marasil); otherwise
+    `student_id` is fixed and only `teacher` is resolved (Tuhfa).
+    """
+    out = frame.copy()
+    by_name = "student" in out
+    if by_name:
+        res = [resolve_pair(index, s, t) for s, t in zip(out["student"], out["teacher"])]
+        out["student_id"] = _opt_int([r.student_id for r in res])
+    else:
+        res = [resolve_pair(index, None, t, student_id=int(sid))
+               for sid, t in zip(out["student_id"], out["teacher"])]
+        out["student_id"] = out["student_id"].astype("Int64")
+    out["teacher_id"] = _opt_int([r.teacher_id for r in res])
+    out["resolved"] = out["student_id"].notna() & out["teacher_id"].notna()
+    out["ambiguous"] = [r.ambiguous for r in res]
+    out["method"] = [r.method for r in res]
+    quotes = out["quote"] if "quote" in out else [None] * len(out)
+    out["relation_scope"] = [relation_scope(q) for q in quotes]
+    return out
+
+
 def marasil_denials(index: NameIndex, path="gold/marasil_pairs.json") -> pd.DataFrame:
     rows = [r for r in json.loads(Path(path).read_text(encoding="utf-8"))
             if "النبي" not in r["teacher"]]
     out = pd.DataFrame(rows)
     cols = ["student", "teacher", "student_id", "teacher_id", "relation", "authority",
-            "resolved", "ambiguous", "method"]
+            "resolved", "ambiguous", "method", "relation_scope"]
     if out.empty:
         return pd.DataFrame(columns=cols)
-    res = [resolve_pair(index, s, t) for s, t in zip(out["student"], out["teacher"])]
-    out["student_id"] = _opt_int([r.student_id for r in res])
-    out["teacher_id"] = _opt_int([r.teacher_id for r in res])
-    out["resolved"] = out["student_id"].notna() & out["teacher_id"].notna()
-    out["ambiguous"] = [r.ambiguous for r in res]
-    out["method"] = [r.method for r in res]
-    return out[cols]
+    return recheck(index, out)[cols]
 
 
 def claude_p(prompt: str) -> str:
@@ -250,6 +293,10 @@ def parse_lines(text: str) -> tuple[list[dict], int]:
     return good, bad
 
 
+TUHFA_COLS = ["student_id", "teacher", "teacher_id", "relation", "quote", "resolved",
+              "ambiguous", "method", "relation_scope"]
+
+
 def tuhfa_denials(tuhfa_path, index: NameIndex, runner=claude_p, batch_size=40,
                   prompt_path=_PROMPT) -> pd.DataFrame:
     tf = pd.read_parquet(tuhfa_path)
@@ -265,25 +312,28 @@ def tuhfa_denials(tuhfa_path, index: NameIndex, runner=claude_p, batch_size=40,
         recs += [g for g in good if g["student_id"] in valid]
     if bad:
         print(f"tuhfa: skipped {bad} unparseable lines")
-    cols = ["student_id", "teacher", "teacher_id", "relation", "quote", "resolved", "ambiguous",
-            "method"]
     if not recs:
-        return pd.DataFrame(columns=cols)
+        return pd.DataFrame(columns=TUHFA_COLS)
     df = pd.DataFrame(recs)
     if "quote" not in df:
         df["quote"] = ""
-    res = [resolve_pair(index, None, t, student_id=sid)
-           for sid, t in zip(df["student_id"], df["teacher"])]
-    df["teacher_id"] = _opt_int([r.teacher_id for r in res])
-    df["resolved"] = df["teacher_id"].notna()
-    df["ambiguous"] = [r.ambiguous for r in res]
-    df["method"] = [r.method for r in res]
-    df["student_id"] = df["student_id"].astype("Int64")
-    return df[cols]
+    return recheck(index, df)[TUHFA_COLS]
+
+
+def tuhfa_denials_from_frame(frame, index: NameIndex) -> pd.DataFrame:
+    """Re-resolve an existing Tuhfa denial frame (path or DataFrame) without the LLM."""
+    df = pd.read_parquet(frame) if not isinstance(frame, pd.DataFrame) else frame
+    if df.empty:
+        return pd.DataFrame(columns=TUHFA_COLS)
+    df = df[["student_id", "teacher", "relation"] + (["quote"] if "quote" in df else [])]
+    if "quote" not in df:
+        df = df.assign(quote="")
+    return recheck(index, df)[TUHFA_COLS]
 
 
 def _valid(df: pd.DataFrame) -> pd.DataFrame:
-    return df[df["resolved"] & ~df["ambiguous"] & df["relation"].isin(DENY)
+    pair = df["relation_scope"] == "pair" if "relation_scope" in df else True
+    return df[df["resolved"] & ~df["ambiguous"] & df["relation"].isin(DENY) & pair
               & df["student_id"].notna() & df["teacher_id"].notna()]
 
 
@@ -302,10 +352,13 @@ def method_breakdown(df: pd.DataFrame) -> dict[str, int]:
     return {m: int(vc.get(m, 0)) for m in ("relation", "prior", "ambiguous", "none")}
 
 
-def run_gold(rawi, tuhfa, marasil, out_dir, runner=claude_p) -> None:
+def run_gold(rawi, tuhfa, marasil, out_dir, runner=claude_p, tuhfa_frame=None) -> None:
+    """Build the gold denial files. With `tuhfa_frame` (an existing denials_tuhfa
+    parquet) Tuhfa rows are re-resolved from it and the LLM runner is not used."""
     idx = NameIndex.from_rawi(rawi)
     m = marasil_denials(idx, marasil)
-    t = tuhfa_denials(tuhfa, idx, runner)
+    t = (tuhfa_denials_from_frame(tuhfa_frame, idx) if tuhfa_frame is not None
+         else tuhfa_denials(tuhfa, idx, runner))
     out = Path(out_dir)
     m.to_parquet(out / "denials_marasil.parquet")
     t.to_parquet(out / "denials_tuhfa.parquet")
@@ -315,6 +368,8 @@ def run_gold(rawi, tuhfa, marasil, out_dir, runner=claude_p) -> None:
               "ambiguous", int(df["ambiguous"].sum()),
               "unresolved", int((~df["resolved"] & ~df["ambiguous"]).sum()))
         print(f"  {name} methods", method_breakdown(df))
+        vc = df["relation_scope"].value_counts() if "relation_scope" in df else {}
+        print(f"  {name} scope", {k: int(vc.get(k, 0)) for k in ("pair", "specific")})
         if len(df):
             v = _valid(df)[["student_id", "teacher_id", "relation"]].copy()
             v["source"] = name
