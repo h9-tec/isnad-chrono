@@ -4,6 +4,7 @@ import csv
 import dataclasses
 import gzip
 import json
+import zlib
 from pathlib import Path
 
 import pandas as pd
@@ -13,7 +14,8 @@ from isnad.parse_hadith import Edge, edges, parse_hadith
 from isnad.parse_rawi import RawiRecord, parse_rawi
 
 _PARSE_ERRORS = (NoPageData, ValueError, KeyError, json.JSONDecodeError, TypeError, IndexError,
-                 AttributeError)
+                 AttributeError,
+                 OSError, EOFError, zlib.error)  # last three: corrupt/truncated .gz
 _RAWI_DROP = {"teachers", "students", "opinions", "death", "birth", "tuhfa_entries"}
 
 
@@ -51,8 +53,14 @@ def _pages(cache_root, kind: str):
 def read_page(path) -> str:
     path = Path(path)
     if path.suffix == ".gz":
-        with gzip.open(path, "rt", encoding="utf-8") as f:
-            return f.read()
+        try:
+            with gzip.open(path, "rt", encoding="utf-8") as f:
+                return f.read()
+        except (OSError, EOFError, zlib.error):
+            plain = path.with_name(path.name.removesuffix(".gz"))
+            if plain.exists():  # corrupt .gz but a plain copy survives
+                return plain.read_text(encoding="utf-8")
+            raise
     return path.read_text(encoding="utf-8")
 
 

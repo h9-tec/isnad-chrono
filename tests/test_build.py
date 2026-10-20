@@ -90,3 +90,30 @@ def test_build_reads_gz_and_plain(tmp_path):
         f.write((FIX / "hadith_muslim_11563.html").read_text(encoding="utf-8"))
     out = tmp_path / "data"
     assert build.build_hadith(root, out / "h.parquet", out / "e.parquet") == (2, 6)
+
+
+def _hroot(tmp_path):
+    root = tmp_path / "raw" / "html"
+    (root / "hadith").mkdir(parents=True)
+    return root
+
+
+def test_corrupt_and_truncated_gz_are_logged_not_fatal(tmp_path):
+    root = _hroot(tmp_path)
+    good = gzip.compress((FIX / "hadith_muslim_11563.html").read_bytes())
+    (root / "hadith" / "1.html.gz").write_bytes(b"\x00random not gzip bytes" * 5)
+    (root / "hadith" / "2.html.gz").write_bytes(good[:50])
+    shutil.copy(FIX / "hadith_muslim_11563.html", root / "hadith" / "3.html")
+    out = tmp_path / "data"
+    assert build.build_hadith(root, out / "h.parquet", out / "e.parquet") == (1, 6)
+    errs = pd.read_csv(out / "build_errors.csv")
+    assert sorted(Path(p).name for p in errs["path"]) == ["1.html.gz", "2.html.gz"]
+
+
+def test_corrupt_gz_falls_back_to_plain_sibling(tmp_path):
+    root = _hroot(tmp_path)
+    (root / "hadith" / "7.html.gz").write_bytes(b"garbage garbage garbage")
+    shutil.copy(FIX / "hadith_muslim_11563.html", root / "hadith" / "7.html")
+    out = tmp_path / "data"
+    assert build.build_hadith(root, out / "h.parquet", out / "e.parquet") == (1, 6)
+    assert not (out / "build_errors.csv").exists()
