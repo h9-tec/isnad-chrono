@@ -81,10 +81,12 @@ def _inputs(d):
                  ).to_parquet(d / "dropped_links.parquet")
     (d / "checks_dating.json").write_text(json.dumps({
         "folds": 5, "n_scored": 7,
-        "method": {"median_abs_error": 12.5, "coverage_90": 0.979, "median_width": 92.0},
-        "method_bounded": {"median_abs_error": 11.5, "coverage_90": 0.98},
-        "depth": {"median_abs_error": 15.45, "coverage_90": 0.901},
-        "generation_mean": {"median_abs_error": 13.2, "coverage_90": 0.91},
+        "method": {"median_abs_error": 12.5, "mean_abs_error": 35.5, "coverage_90": 0.979,
+                   "median_width": 92.0},
+        "method_bounded": {"median_abs_error": 11.5, "mean_abs_error": 14.8, "coverage_90": 0.98,
+                           "n": 6},
+        "depth": {"median_abs_error": 15.45, "mean_abs_error": 24.3, "coverage_90": 0.901},
+        "generation_mean": {"median_abs_error": 13.2, "mean_abs_error": 18.4, "coverage_90": 0.91},
         "per_fold": [{"fold": 0}], "run": {"n_dropped": 1, "seconds": {"links": 0.1}}}))
     es = {c: [False] for c in export_hf.EDGE_SCORE_COLS}
     es |= {"teacher_id": [1], "student_id": [2], "hadith_id": [9], "position": [0],
@@ -104,7 +106,8 @@ def test_release_configs_and_denylist(tmp_path):
     (out / "MANIFEST.json").write_text("{}")  # a previous release ...
     (out / "stale_text.parquet").write_text("x")  # ... whose stale files must not survive
     man = export_hf.build_release(d, out,
-                                  matns={1: BASE1 + " " + BASE2, 2: _variant(), 3: _other()})
+                                  matns={1: BASE1 + " " + BASE2, 2: _variant(), 3: _other()},
+                                  cache_root=_cache(tmp_path / "cache"))
     for c in export_hf.REQUIRED_CONFIGS:
         assert (out / "data" / f"{c}.parquet").exists(), c
     assert not (out / "stale_text.parquet").exists()
@@ -126,10 +129,20 @@ def test_release_configs_and_denylist(tmp_path):
     assert checks["sanity_compiler_leaf_rate"] == 1.0
     assert checks["sanity_root_no_parent_rate"] == 1.0
     assert checks["dating_method_median_abs_error"] == 12.5
+    assert checks["n_hadith_pages_cached"] == 2
+    assert checks["groups_complete_rate"] == 1.0 and checks["occurrence_chain_rate"] == 1.0
+    assert checks["edits_no_chain_rate"] == 0.0
+    assert checks["cl_k2_rate_multi"] == 1.0 and checks["cl_k3_rate_multi"] == 0.0
+    assert checks["cl_k2_bounded_rate"] == 1.0  # synthetic intervals are 20 years wide
+    assert "coverage_groups_cl_k2_dated_rate" not in checks
+    row = pd.read_parquet(out / "data" / "checks.parquet").iloc[0]
+    assert row["edits_no_chain_rate"] == 0.0 and row["cl_k2_rate_multi"] == 1.0
     assert not [k for k in checks if "per_fold" in k or "seconds" in k]
     assert len(pd.read_parquet(out / "data" / "checks.parquet")) == 1
     readme = (out / "README.md").read_text()
-    for s in ("12.500", "0.979", "15.450", "v0.1", "config_name: narrators", "hdith.com"):
+    for s in ("12.500", "0.979", "15.450", "v0.1", "config_name: narrators", "hdith.com",
+              "35.500", "24.300", "14.800", "partial crawl", "2 hadith pages",
+              "among the 1 groups with at least 2 parsed chains", "mean error is worse"):
         assert s in readme, s
     assert "{{" not in readme and "n/a" not in readme
     assert man["chains"]["rows"] == 12
@@ -285,3 +298,15 @@ def test_malformed_input_is_argparse_error(tmp_path, capsys):
     with pytest.raises(SystemExit) as e:
         cli.main(["export-hf", "--out", str(tmp_path / "o"), "--input", "chains"])
     assert e.value.code == 2 and "KEY=PATH" in capsys.readouterr().err
+
+
+def test_all_null_shawahid_companion_dropped(tmp_path):
+    d, out = tmp_path / "data", tmp_path / "release_hf"
+    _inputs(d)
+    sh = pd.read_parquet(d / "shawahid.parquet")
+    sh.assign(companion_rawi_id=pd.array([None], dtype="Int64")).to_parquet(d / "shawahid.parquet")
+    export_hf.build_release(d, out, matns={2: _variant(), 3: _other()},
+                            cache_root=_cache(tmp_path / "cache"))
+    assert "companion_rawi_id" not in pd.read_parquet(out / "data" / "shawahid.parquet").columns
+    readme = (out / "README.md").read_text()
+    assert "null on every row" in readme and "n/a" not in readme

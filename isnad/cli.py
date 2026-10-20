@@ -134,7 +134,8 @@ def main(argv=None) -> None:
         overrides = dict(args.input)
         kw = {} if args.align_sample is None else {"align_sample": args.align_sample}
         man = export_hf.build_release(args.data_dir, args.out, inputs=overrides,
-                                      matns=export_hf.matn_loader(args.cache_root), **kw)
+                                      matns=export_hf.matn_loader(args.cache_root),
+                                      cache_root=args.cache_root, **kw)
         for name, info in man.items():
             print(name, info["rows"], "rows")
         if args.push:

@@ -31,6 +31,21 @@ critic statement is redistributed.
 - Version: {{version}}. Groups whose occurrences are not all cached carry `complete = false`; a
   later rebuild after the full crawl will update them.
 
+## Release {{version}}: partial crawl
+
+This release was built from a partial crawl of hdith.com: {{n_hadith_pages_cached}} hadith pages
+were cached when the release was built (the chain and group stages ran on a slightly earlier
+snapshot of the same crawl while it was still growing). The Six Books are complete (a handful of
+pages aside); the other collections are partial or not yet crawled. As a result:
+
+- complete groups (every occurrence cached): {{groups_complete_rate}} of {{coverage_n_groups}} groups;
+- occurrences with a parsed chain: {{occurrence_chain_rate}};
+- edit rows with status `no_chain` (no carrier has a parsed chain, mostly carriers in collections
+  not yet crawled): {{edits_no_chain_rate}}.
+
+Trees, common links and edit attributions of incomplete groups can change. v0.2 will be rebuilt
+from the full crawl.
+
 ## Configs
 
 | config | rows | content |
@@ -73,9 +88,19 @@ hashes), `shawahid` (corroborating reports by other Companions, ids only), `shaw
   `ins`, `del`), `status` (`attributed`, `ambiguous`, `partial`, `cross_root`, `no_chain`,
   `no_common_node`), `ambiguous`, `is_leaf_edit` (single-witness variant at the compiler),
   `has_tahwil_carrier`, `n_carriers`, `n_carriers_with_chain`, `n_base_carriers`.
+- `edit_rates`: `depth`, `n_transmissions`, `n_edits`, `rate`, `n_edits_nonleaf`, `rate_nonleaf`,
+  from `attributed` and `ambiguous` rows only. Depth 0 is the Companion: edits attributed there
+  have no transmission into the node, so `n_transmissions` is 0 and the rates are null.
+- `shawahid`: `group_id`, `hadith_ids` (the corroborating reports). {{shawahid_note}} For the
+  Companion of each corroborating report use `shawahid_companions` (`group_id`, `hadith_id`,
+  `companion_rawi_id`), resolved from the parsed chains: {{coverage_shawahid_companions_resolved_rate}}
+  of its rows have a Companion.
 - `edge_scores`: as in v1 (`teacher_id`, `student_id`, `hadith_id`, `position`, `term`, `p_meet`,
   evidence flags, `verdict`).
-- `checks`: flattened keys, prefixed `alignment_`, `sanity_`, `coverage_`, `dating_`.
+- `checks`: flattened keys, prefixed `alignment_`, `sanity_`, `coverage_`, `dating_`, plus the
+  unprefixed release-status keys `n_hadith_pages_cached`, `groups_complete_rate`,
+  `occurrence_chain_rate`, `edits_no_chain_rate`, `cl_k2_rate_multi`, `cl_k3_rate_multi`,
+  `cl_k2_bounded_rate`.
 
 ## Method
 
@@ -117,12 +142,17 @@ Computed when the release is built and shipped in the `checks` config and `check
     {{alignment_control_hit_rate}} at the same slots for texts without the variant
     ({{alignment_n_control_pairs}} control pairs). Carrier texts come from other books and editions
     and differ from the base reading in many places, so the positional agreement is indicative only.
-- Narrator dating hold-out (median absolute error in years / 90% interval coverage / median
-  width), n = {{dating_n_scored}}:
-  - propagation: {{dating_method_median_abs_error}} / {{dating_method_coverage_90}} / {{dating_method_median_width}}
-  - propagation, bounded intervals only: {{dating_method_bounded_median_abs_error}} / {{dating_method_bounded_coverage_90}}
-  - baseline by chain depth: {{dating_depth_median_abs_error}} / {{dating_depth_coverage_90}}
-  - baseline by generation mean: {{dating_generation_mean_median_abs_error}} / {{dating_generation_mean_coverage_90}}
+- Narrator dating hold-out (median absolute error in years / mean absolute error / 90% interval
+  coverage / median width), n = {{dating_n_scored}}:
+  - propagation: {{dating_method_median_abs_error}} / {{dating_method_mean_abs_error}} / {{dating_method_coverage_90}} / {{dating_method_median_width}}
+  - propagation, bounded intervals only (width ≤ {{bounded_width}} years, n = {{dating_method_bounded_n}}): {{dating_method_bounded_median_abs_error}} / {{dating_method_bounded_mean_abs_error}} / {{dating_method_bounded_coverage_90}}
+  - baseline by chain depth: {{dating_depth_median_abs_error}} / {{dating_depth_mean_abs_error}} / {{dating_depth_coverage_90}}
+  - baseline by generation mean: {{dating_generation_mean_median_abs_error}} / {{dating_generation_mean_mean_abs_error}} / {{dating_generation_mean_coverage_90}}
+
+  The median error of propagation beats the depth baseline, but its mean error is worse than the
+  baseline: a heavy tail of large errors comes from narrators whose inferred interval is unbounded
+  (no constraint closes it). Restricted to bounded intervals, the mean error drops to
+  {{dating_method_bounded_mean_abs_error}} years.
 - Dropped links (negative cycles): {{sanity_n_dropped_links}}.
 - Tree sanity: compilers that are leaves {{sanity_compiler_leaf_rate}} ({{sanity_n_compilers_nonleaf}} of
   {{sanity_n_compilers}} compilers also narrate inside another chain of the same component); roots
@@ -130,9 +160,14 @@ Computed when the release is built and shipped in the `checks` config and `check
   later than every dated compiler's ends (spec "root earliest") {{sanity_root_earliest_rate}} of
   {{sanity_n_root_date_checked}} dated components.
 - Coverage: {{sanity_n_chains}} chains ({{sanity_n_chains_unjoined}} unjoined); occurrences with a parsed
-  chain {{coverage_occurrences_with_chain_rate}}; complete groups {{coverage_groups_complete_rate}};
-  groups with a k=2 common link {{coverage_groups_cl_k2_rate}} (dated {{coverage_groups_cl_k2_dated_rate}});
-  edit rows in the rates {{coverage_edits_rated_rate}}.
+  chain {{occurrence_chain_rate}}; complete groups {{groups_complete_rate}}; edit rows in the rates
+  (status `attributed` or `ambiguous`) {{coverage_edits_rated_rate}}.
+- Common links: among the {{coverage_n_groups_multi_chain}} groups with at least 2 parsed chains,
+  {{cl_k2_rate_multi}} have a k=2 common link and {{cl_k3_rate_multi}} a k=3 one; among all
+  {{coverage_n_groups}} groups (including those with 0 or 1 chain) the rates are
+  {{coverage_groups_cl_k2_rate}} and {{coverage_groups_cl_k3_rate}}. Every common link has an
+  inferred death interval; {{cl_k2_bounded_rate}} of the k=2 common links have a bounded one (width
+  ≤ {{bounded_width}} years).
 
 ## Limitations
 

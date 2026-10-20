@@ -319,24 +319,47 @@ def coverage(tables: dict[str, pd.DataFrame], chains: pd.DataFrame) -> dict:
     occ_h = set(occ.hadith_id.astype(int))
     with_chain = set(chains.loc[~chains.unjoined, "hadith_id"].astype(int))
     per_group = rep.groupby("group_id")
+    n_chains = per_group.n_chains.sum()
+    multi = n_chains >= 2
     out = {
         "n_groups": int(len(g)),
-        "groups_complete_rate": float(g.complete.mean()) if len(g) else None,
-        "occurrences_with_chain_rate": (len(occ_h & with_chain) / len(occ_h)) if occ_h else None,
-        "groups_with_chains_rate": (float((per_group.n_chains.max() > 0).mean())
-                                    if len(rep) else None),
+        "n_groups_multi_chain": int(multi.sum()),
+        "groups_with_chains_rate": float((n_chains > 0).mean()) if len(rep) else None,
     }
     for k in K_CL:
         has = per_group[f"cl_k{k}_id"].agg(lambda s: s.notna().any())
-        dated = per_group[f"cl_k{k}_date_lo"].agg(lambda s: s.notna().any())
         out[f"groups_cl_k{k}_rate"] = float(has.mean()) if len(has) else None
-        out[f"groups_cl_k{k}_dated_rate"] = float(dated.mean()) if len(dated) else None
+        # the same, among groups with >= 2 chains (a single chain cannot have a common link)
+        out[f"cl_k{k}_rate_multi"] = float(has[multi].mean()) if multi.any() else None
+        cl = rep[rep[f"cl_k{k}_id"].notna()]
+        width = cl[f"cl_k{k}_date_hi"] - cl[f"cl_k{k}_date_lo"]
+        out[f"cl_k{k}_bounded_rate"] = (float((width <= dating.BOUNDED_WIDTH).mean())
+                                        if len(cl) else None)
+    out["groups_complete_rate"] = float(g.complete.mean()) if len(g) else None
+    out["occurrence_chain_rate"] = (len(occ_h & with_chain) / len(occ_h)) if occ_h else None
     out["n_narrators"] = int(len(nar))
     out |= {f"narrators_method_{m}": int(c) for m, c in nar["method"].value_counts().items()}
     out["n_edits"] = int(len(ed))
     out |= {f"edits_status_{s}": int((ed.status == s).sum()) for s in edits.STATUSES}
     out["edits_rated_rate"] = float(ed.status.isin(edits.RATED).mean()) if len(ed) else None
+    out["edits_no_chain_rate"] = float((ed.status == "no_chain").mean()) if len(ed) else None
+    sc = tables.get("shawahid_companions")
+    out["shawahid_companions_resolved_rate"] = (
+        float(sc.companion_rawi_id.notna().mean()) if sc is not None and len(sc) else None)
     return out
+
+
+# coverage keys also written without the "coverage_" prefix (headline release status)
+STATUS_KEYS = ("groups_complete_rate", "occurrence_chain_rate", "edits_no_chain_rate",
+               "cl_k2_rate_multi", "cl_k3_rate_multi", "cl_k2_bounded_rate")
+
+
+def count_cached_pages(cache_root: str | Path | None) -> int | None:
+    """Cached hadith pages at build time (read-only directory listing)."""
+    if cache_root is None or not (Path(cache_root) / "hadith").is_dir():
+        return None
+    from isnad.build import _pages
+    return len(_pages(cache_root, "hadith"))
 
 
 # ---------------------------------------------------------------- release
@@ -442,7 +465,8 @@ def guard_out(out: str | Path, data_dir: str | Path, inputs: Iterable[Path] = ()
 
 def build_release(data_dir: str | Path = "data", out: str | Path = "release_hf",
                   inputs: dict | None = None, matns=None, align_sample: int = ALIGN_SAMPLE,
-                  seed: int = 0, card: str | Path = CARD) -> Manifest:
+                  seed: int = 0, card: str | Path = CARD,
+                  cache_root: str | Path | None = None) -> Manifest:
     """Write the release folder; returns the manifest (config -> rows, columns)."""
     p = _paths(data_dir, inputs)
     out = Path(out)
@@ -466,6 +490,13 @@ def build_release(data_dir: str | Path = "data", out: str | Path = "release_hf",
     chains = tables["chains"]
     trees = build_trees(tree.load_chains(p["chains"]), tables["occurrences"])
     sanity = sanity_checks(trees, chains, tables.get("dropped_links"), read("dates"))
+    shawahid_note = ""
+    sh = tables.get("shawahid")
+    if sh is not None and len(sh) and sh.companion_rawi_id.isna().all():
+        tables["shawahid"] = sh.drop(columns=["companion_rawi_id"])
+        shawahid_note = ("In this release `companion_rawi_id` was null on every row (the site "
+                         "sends no narrator for shawahid groups), so the column is dropped from "
+                         "`shawahid`.")
     cov = coverage(tables, chains)
     if p["text"].exists() and p["segments"].exists():
         txt = read("text")
@@ -480,6 +511,8 @@ def build_release(data_dir: str | Path = "data", out: str | Path = "release_hf",
     dating_m = json.loads(p["checks_dating"].read_text()) if p["checks_dating"].exists() else {}
     checks = {"release_version": VERSION, **flatten(align, "alignment_"),
               **flatten(sanity, "sanity_"), **flatten(cov, "coverage_"),
+              **{k: cov[k] for k in STATUS_KEYS},
+              "n_hadith_pages_cached": count_cached_pages(cache_root),
               **flatten(dating_m, "dating_")}
     tables["checks"] = pd.DataFrame([checks])
 
@@ -498,6 +531,10 @@ def build_release(data_dir: str | Path = "data", out: str | Path = "release_hf",
     ctx = dict(checks) | {f"rows_{n}": m["rows"] for n, m in manifest.items()}
     ctx["configs_yaml"] = _configs_yaml(list(manifest))
     ctx["version"] = VERSION
+    ctx["bounded_width"] = dating.BOUNDED_WIDTH
+    ctx["shawahid_note"] = shawahid_note or (
+        "`companion_rawi_id` is the Companion resolved from the site's shawahid narrator name; "
+        "it is null where the name could not be resolved.")
     (out / "README.md").write_text(render_card(Path(card).read_text(encoding="utf-8"), ctx),
                                    encoding="utf-8")
     verify_release(out)
