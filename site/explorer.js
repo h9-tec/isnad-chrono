@@ -274,9 +274,12 @@
     scroller.scrollLeft = Math.max(0, centerFrac * W * scale - scroller.clientWidth / 2);
   }
 
-  function selectNode(d) {
-    svg.selectAll("g.node").classed("selected", (n) => n.id === d.id);
-    svg.selectAll("g.link").classed("hl", (l) => l.source.id === d.id || l.target.id === d.id);
+  // comp = the component the clicked node belongs to: the same narrator can
+  // appear under several roots, so only this component's links are listed.
+  function selectNode(d, comp) {
+    const own = new Set(comp ? comp.links : []);
+    svg.selectAll("g.node").classed("selected", (n) => n === d);
+    svg.selectAll("g.link").classed("hl", (l) => own.has(l) && (l.source.id === d.id || l.target.id === d.id));
     const box = panel.querySelector("#selected");
     if (!box) return;
     const i = d.info;
@@ -291,9 +294,7 @@
       rows.push(`<dt>الدعم</dt><dd>${i.support ?? 0}</dd><dt>عدد الأسانيد</dt><dd>${i.n_chains ?? 0}</dd>`);
     }
     rows.push(`<dt>العمق</dt><dd>${d.depth ?? "?"} · k=${d.k} · ${d.n_desc} مصنف تحته</dd>`);
-    const incoming = [];
-    for (const c of state.layout.components)
-      for (const l of c.links) if (l.target.id === d.id) incoming.push(l);
+    const incoming = [...own].filter((l) => l.target.id === d.id);
     if (d.edits.length)
       rows.push(
         `<dt>تغييرات اللفظ</dt><dd>${d.edits.map((e) => `مقطع ${e.seg}: ${esc(e.type)} (${esc(e.status)})`).join("<br>")}</dd>`

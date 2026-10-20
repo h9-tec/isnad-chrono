@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>isnad-chrono · الرواة</title>
+  <meta name="description" content="صفحة الراوي: التواريخ المسجلة والمقدرة، الشيوخ والتلاميذ، والأحاديث التي هو حلقتها المشتركة.">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header class="site-header">
+    <div class="brand">
+      <a href="index.html" class="logo">isnad-chrono</a>
+      <span class="tagline">مستكشف الأسانيد وتواريخ الرواة <span class="en">· isnad explorer</span></span>
+    </div>
+    <nav class="site-nav">
+      <a href="index.html">المستكشف</a>
+      <a href="narrator.html" aria-current="page">الرواة</a>
+      <a href="atlas.html">الأطلس</a>
+      <a href="boards.html">اللوائح</a>
+      <a href="method.html">المنهج</a>
+    </nav>
+  </header>
+
+  <section class="search">
+    <form id="narrator-form" role="search" action="narrator.html">
+      <label for="nq" class="visually-hidden">ابحث عن راوٍ</label>
+      <input id="nq" name="q" type="search" autocomplete="off" spellcheck="false" placeholder="اسم الراوي أو رقمه">
+      <button type="submit">بحث</button>
+    </form>
+  </section>
+
+  <main id="narrator" class="page" aria-live="polite">
+    <p class="muted">جارٍ التحميل…</p>
+  </main>
+
+  <footer class="site-footer">
+    <p>
+      البيانات مستخرجة من <a href="https://hdith.com/">hdith.com</a>
+      · مجموعة البيانات على <a href="https://huggingface.co/datasets/HeshamHaroon/isnad-chrono">Hugging Face</a>
+      · <a href="https://github.com/h9-tec/isnad-chrono">الشيفرة</a>
+      · الأرقام المشتقة بترخيص CC-BY-4.0 · لا يُعاد نشر نص الحديث.
+    </p>
+  </footer>
+
+  <script src="vendor/d3.v7.min.js"></script>
+  <script src="data.js"></script>
+  <script src="common.js"></script>
+  <script src="explorer.js"></script>
+  <script src="narrator.js"></script>
+</body>
+</html>

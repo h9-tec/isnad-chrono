@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>isnad-chrono · اللوائح</title>
+  <meta name="description" content="لوائح: أكثر الحلقات المشتركة، أقدم الروايات المؤرخة، تعارضات التأريخ، وأكثر الرواة إدخالًا للتغييرات.">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header class="site-header">
+    <div class="brand">
+      <a href="index.html" class="logo">isnad-chrono</a>
+      <span class="tagline">مستكشف الأسانيد وتواريخ الرواة <span class="en">· isnad explorer</span></span>
+    </div>
+    <nav class="site-nav">
+      <a href="index.html">المستكشف</a>
+      <a href="narrator.html">الرواة</a>
+      <a href="atlas.html">الأطلس</a>
+      <a href="boards.html" aria-current="page">اللوائح</a>
+      <a href="method.html">المنهج</a>
+    </nav>
+  </header>
+
+  <main class="page">
+    <h1>اللوائح <span class="en">leaderboards</span></h1>
+    <p class="muted small">انقر على عنوان العمود للترتيب. <span class="en">Click a column header to sort.</span></p>
+    <nav class="toc small" aria-label="اللوائح">
+      <a href="#top_cls">أكثر الحلقات المشتركة</a> · <a href="#earliest">أقدم الروايات المؤرخة</a> ·
+      <a href="#conflicts">تعارضات التأريخ</a> · <a href="#top_editors">أكثر المغيّرين للفظ</a>
+    </nav>
+
+    <section class="card" id="top_cls">
+      <h2>أكثر الحلقات المشتركة <span class="en">most frequent k2 common links</span></h2>
+      <p class="small muted">عدد المجموعات التي يكون فيها الراوي الحلقة المشتركة k2. <span class="en">Number of groups where the narrator is the k2 common link.</span></p>
+      <div class="board-body"><p class="muted">جارٍ التحميل…</p></div>
+    </section>
+
+    <section class="card" id="earliest">
+      <h2>أقدم الروايات المؤرخة <span class="en">earliest datable reports</span></h2>
+      <p class="small muted">المجموعات ذات أدنى حد أعلى لوفاة الحلقة المشتركة k2 (دون المؤرخة بالتقدير الأولي وحده). <span class="en">Groups with the lowest upper bound on the k2 common link's death (prior-only dates excluded).</span></p>
+      <div class="board-body"></div>
+    </section>
+
+    <section class="card" id="conflicts">
+      <h2>تعارضات التأريخ <span class="en">chronology contradictions</span></h2>
+      <p class="small muted">الرواة الذين أسقط التأريخ أكثر الصلات المتعلقة بهم، لأن الأسانيد تجعل مجالاتهم متناقضة. <span class="en">Narrators with the most teacher–student links dropped by the dating step (negative cycles).</span></p>
+      <div class="board-body"></div>
+    </section>
+
+    <section class="card" id="top_editors">
+      <h2>أكثر الرواة إدخالًا لتغييرات اللفظ <span class="en">top edit introducers</span></h2>
+      <p class="small muted">التغييرات المنسوبة (attributed) مع عدد أسانيد الراوي ليظهر المعدل؛ المعدل هنا تغييرات لكل سند، لا احتمال. <span class="en">Attributed edits next to the narrator's number of chains; the ratio is edits per chain, not a probability.</span></p>
+      <div class="board-body"></div>
+    </section>
+  </main>
+
+  <footer class="site-footer">
+    <p>
+      البيانات مستخرجة من <a href="https://hdith.com/">hdith.com</a>
+      · مجموعة البيانات على <a href="https://huggingface.co/datasets/HeshamHaroon/isnad-chrono">Hugging Face</a>
+      · <a href="https://github.com/h9-tec/isnad-chrono">الشيفرة</a>
+      · الأرقام المشتقة بترخيص CC-BY-4.0 · لا يُعاد نشر نص الحديث.
+    </p>
+  </footer>
+
+  <script src="data.js"></script>
+  <script src="common.js"></script>
+  <script src="boards.js"></script>
+</body>
+</html>

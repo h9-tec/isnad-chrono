@@ -1,0 +1,114 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>isnad-chrono · المنهج</title>
+  <meta name="description" content="منهج isnad-chrono: تحليل الأسانيد، المجموعات، تأريخ الرواة، الحلقة المشتركة، ونسبة تغييرات اللفظ، مع نتائج الفحوص.">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body data-checks="auto">
+  <header class="site-header">
+    <div class="brand">
+      <a href="index.html" class="logo">isnad-chrono</a>
+      <span class="tagline">مستكشف الأسانيد وتواريخ الرواة <span class="en">· isnad explorer</span></span>
+    </div>
+    <nav class="site-nav">
+      <a href="index.html">المستكشف</a>
+      <a href="narrator.html">الرواة</a>
+      <a href="atlas.html">الأطلس</a>
+      <a href="boards.html">اللوائح</a>
+      <a href="method.html" aria-current="page">المنهج</a>
+    </nav>
+  </header>
+
+  <main class="page prose">
+    <h1>المنهج <span class="en">method</span></h1>
+    <p>isnad-chrono يحوّل أسانيد كتب الحديث كما تعرضها <a href="https://hdith.com/">hdith.com</a> إلى رسوم بيانية: من روى عمن، ومتى تُوفي كل راوٍ تقديرًا، ومن هو الحلقة المشتركة لكل حديث، وأين دخل الاختلاف في اللفظ. النتائج أرقام بنيوية لا أحكام على صحة الحديث.</p>
+
+    <section class="card" lang="ar">
+      <h2>الخطوات</h2>
+      <ol id="steps-ar" class="steps">
+        <li><b>الأسانيد.</b> يُحلَّل الإسناد من صفحة كل حديث (أسماء الرواة وصيغ التحمل بترتيبها)، ويُقسم عند كل «ح» (تحويل) وعند صيغ الواو (وحدثنا، وأخبرنا…)، ويوصل كل مقطع بالسند الأخير عند آخر راوٍ مشترك، فيكون لكل طريق إلى المصنف سند مستقل.</li>
+        <li><b>المجموعات.</b> تؤخذ من مجموعة التخريج في الموقع: مواضع الحديث في الكتب، ومقاطع الاختلاف (النص الأساس والبدائل مع الأحاديث الحاملة لها)، محفوظة بصيغة مُعمّاة (hash) لا نصًا.</li>
+        <li><b>تأريخ الرواة.</b> لكل راوٍ متغيرا الولادة والوفاة؛ كل صلة تلميذ ← شيخ تعني أن ولادة التلميذ + 8 ≤ وفاة الشيخ، والعمر بين 20 و100 سنة، والتواريخ المسجلة مجالات ضيقة. تُنشر القيود على شبكة الرواة؛ وإذا تناقض مجال راوٍ أُسقطت صلة واحدة (الصلات المسقطة). تُقاس الدقة باختبار مستبعد من خمس طيات على سنوات الوفاة المسجلة.</li>
+        <li><b>الشجرة والحلقة المشتركة.</b> تُدمج أسانيد مواضع المجموعة في شجرة لكل صحابي. الحلقة المشتركة عند k هي أقرب راوٍ إلى الصحابي له k فروع على الأقل تصل إلى مصنف ويحوي فرعه كل المصنفين؛ وتاريخ الرواية هو مجال وفاته المقدر.</li>
+        <li><b>نسبة تغييرات اللفظ.</b> لكل بديل: الراوي الذي يقع على كل أسانيد كل حامليه وهو الأعمق في الشجرة هو من أدخل التغيير؛ «ملتبس» إذا روى هو أيضًا النص الأساس. معدلات الانحراف تعدّ الحالات المنسوبة والملتبسة فقط.</li>
+      </ol>
+    </section>
+
+    <section class="card" lang="en" dir="ltr">
+      <h2>Steps</h2>
+      <ol id="steps-en" class="steps">
+        <li><b>Chains.</b> Parsed from the annotated isnad of each hadith page, split at every ح (tahwil) and at و-formulas, each earlier segment joined to the final chain at its last shared narrator: one chain per path to the compiler.</li>
+        <li><b>Groups.</b> The site's takhrij group of each page: occurrences, and the variant segments (base text plus substitutions with their carrier hadiths), kept as hashes.</li>
+        <li><b>Narrator dating.</b> Birth and death per narrator; each link student ← teacher gives birth(student) + 8 ≤ death(teacher); lifespans 20–100 years; recorded dates are tight intervals. Difference constraints are propagated; when an interval empties, one link is dropped. Accuracy: 5-fold hold-out of recorded death years.</li>
+        <li><b>Trees and common links.</b> All chains of a group merge into one graph per root Companion. The common link under k is the shallowest node with at least k branches reaching a compiler whose subtree contains every compiler; the report date is its inferred death interval.</li>
+        <li><b>Edit attribution.</b> For each substitution, the narrator on every chain of every carrier and deepest in the tree introduced it; <i>ambiguous</i> when that narrator also transmitted the base text. Edit rates count only attributed and ambiguous rows.</li>
+      </ol>
+    </section>
+
+    <section class="card">
+      <h2>الفحوص <span class="en">checks (release <span data-check="release_version"></span>)</span></h2>
+      <div class="table-wrap">
+      <table class="board checks">
+        <tbody>
+          <tr><th>صفحات الأحاديث المخزنة <span class="en">hadith pages cached</span></th><td class="num"><span data-check="n_hadith_pages_cached" data-fmt="int"></span></td></tr>
+          <tr><th>الأسانيد (غير الموصولة) <span class="en">chains (unjoined)</span></th><td class="num"><span data-check="sanity_n_chains" data-fmt="int"></span> / <span data-check="sanity_n_chains_unjoined" data-fmt="int"></span></td></tr>
+          <tr><th>المجموعات / بسندين فأكثر <span class="en">groups / with ≥ 2 chains</span></th><td class="num"><span data-check="coverage_n_groups" data-fmt="int"></span> / <span data-check="coverage_n_groups_multi_chain" data-fmt="int"></span></td></tr>
+          <tr><th>المجموعات المكتملة <span class="en">complete groups</span></th><td class="num"><span data-check="groups_complete_rate" data-fmt="pct"></span></td></tr>
+          <tr><th>مواضع لها سند محلل <span class="en">occurrences with a parsed chain</span></th><td class="num"><span data-check="occurrence_chain_rate" data-fmt="pct"></span></td></tr>
+          <tr><th>حلقة مشتركة k2 / k3 بين متعددة الأسانيد <span class="en">k2 / k3 common link among multi-chain groups</span></th><td class="num"><span data-check="cl_k2_rate_multi" data-fmt="pct"></span> / <span data-check="cl_k3_rate_multi" data-fmt="pct"></span></td></tr>
+          <tr><th>حلقات k2 بمجال محدود (≤ 300 سنة) <span class="en">k2 common links with a bounded interval</span></th><td class="num"><span data-check="cl_k2_bounded_rate" data-fmt="pct"></span></td></tr>
+          <tr><th>حلقات k2 مؤرخة بالتقدير الأولي وحده <span class="en">k2 common links dated by the prior only</span></th><td class="num"><span data-check="cl_k2_prior_only_rate" data-fmt="pct"></span></td></tr>
+          <tr><th>الرواة: معروف / مقدر / تقدير أولي <span class="en">narrators: known / inferred / prior only</span></th><td class="num"><span data-check="coverage_narrators_method_known" data-fmt="int"></span> / <span data-check="coverage_narrators_method_inferred" data-fmt="int"></span> / <span data-check="coverage_narrators_method_prior_only" data-fmt="int"></span></td></tr>
+          <tr><th>تأريخ (اختبار مستبعد): الخطأ الوسيط، الانتشار / عمق السند <span class="en">dating hold-out median abs. error (years): propagation / depth baseline</span></th><td class="num"><span data-check="dating_method_median_abs_error" data-fmt="years"></span> / <span data-check="dating_depth_median_abs_error" data-fmt="years"></span></td></tr>
+          <tr><th>الخطأ المتوسط: الانتشار / عمق السند <span class="en">mean abs. error: propagation / depth baseline</span></th><td class="num"><span data-check="dating_method_mean_abs_error" data-fmt="years"></span> / <span data-check="dating_depth_mean_abs_error" data-fmt="years"></span></td></tr>
+          <tr><th>الخطأ المتوسط للمجالات المحدودة <span class="en">mean abs. error, bounded intervals only</span></th><td class="num"><span data-check="dating_method_bounded_mean_abs_error" data-fmt="years"></span></td></tr>
+          <tr><th>تغطية مجال 90٪ / عدد المختبَرين <span class="en">90% interval coverage / n scored</span></th><td class="num"><span data-check="dating_method_coverage_90" data-fmt="pct"></span> / <span data-check="dating_method_n" data-fmt="int"></span></td></tr>
+          <tr><th>صلات أسقطها التأريخ <span class="en">links dropped by dating (negative cycles)</span></th><td class="num"><span data-check="sanity_n_dropped_links" data-fmt="int"></span></td></tr>
+          <tr><th>لفظ الاختلاف موجود في نص حامله / في الضابط <span class="en">variant wording found in its carrier / in control texts</span></th><td class="num"><span data-check="alignment_surface_found_rate" data-fmt="pct"></span> / <span data-check="alignment_control_surface_found_rate" data-fmt="pct"></span></td></tr>
+          <tr><th>موضع الاختلاف متفق / في الضابط <span class="en">variant position agrees / control hit rate</span></th><td class="num"><span data-check="alignment_agreement" data-fmt="pct"></span> / <span data-check="alignment_control_hit_rate" data-fmt="pct"></span></td></tr>
+          <tr><th>تغييرات اللفظ / الداخلة في المعدلات <span class="en">edit rows / in the rates (attributed + ambiguous)</span></th><td class="num"><span data-check="coverage_n_edits" data-fmt="int"></span> / <span data-check="coverage_edits_rated_rate" data-fmt="pct"></span></td></tr>
+          <tr><th>تغييرات بلا إسناد <span class="en">edits without a chain</span></th><td class="num"><span data-check="edits_no_chain_rate" data-fmt="pct"></span></td></tr>
+          <tr><th>المصنفون أوراق في الشجرة <span class="en">compilers that are leaves</span></th><td class="num"><span data-check="sanity_compiler_leaf_rate" data-fmt="pct"></span></td></tr>
+        </tbody>
+      </table>
+      </div>
+      <p class="small muted">الخطأ الوسيط للانتشار أدنى من خط الأساس بعمق السند، ومتوسطه أعلى بسبب ذيل من الرواة الذين لا يغلق مجالَهم أي قيد؛ في المجالات المحدودة وحدها ينخفض المتوسط كثيرًا.
+        <span class="en">Propagation beats the depth baseline on the median error; its mean is pulled up by narrators whose interval no constraint closes (see the bounded-only row).</span></p>
+    </section>
+
+    <section class="card">
+      <h2>حدود <span class="en">limitations</span></h2>
+      <ul>
+        <li>الحلقة المشتركة خاصية بنيوية للأسانيد المحللة، ولا تثبت وحدها من أشاع الرواية. <span class="en">A common link is structural; it does not by itself establish who put a report into circulation.</span></li>
+        <li>«تقدير أولي» يعني أن أي قيد من الأسانيد لم يصل إلى الراوي، فمجاله واسع. <span class="en">prior_only: no chain constraint reached the narrator.</span></li>
+        <li>المجموعات غير المكتملة قد تتغير بعد اكتمال الجمع. <span class="en">Incomplete groups can change after the full crawl.</span></li>
+        <li>نتائج التأريخ والحلقة المشتركة ليست أحكامًا على صحة الحديث. <span class="en">Chronology and common-link results are not authenticity verdicts.</span></li>
+      </ul>
+    </section>
+
+    <section class="card">
+      <h2>الروابط <span class="en">links</span></h2>
+      <ul>
+        <li>مجموعة البيانات وبطاقتها: <a href="https://huggingface.co/datasets/HeshamHaroon/isnad-chrono" dir="ltr">huggingface.co/datasets/HeshamHaroon/isnad-chrono</a></li>
+        <li>الشيفرة: <a href="https://github.com/h9-tec/isnad-chrono" dir="ltr">github.com/h9-tec/isnad-chrono</a></li>
+        <li>المصدر: <a href="https://hdith.com/" dir="ltr">hdith.com</a> (لا يُعاد نشر نص الحديث)</li>
+      </ul>
+    </section>
+  </main>
+
+  <footer class="site-footer">
+    <p>
+      البيانات مستخرجة من <a href="https://hdith.com/">hdith.com</a>
+      · مجموعة البيانات على <a href="https://huggingface.co/datasets/HeshamHaroon/isnad-chrono">Hugging Face</a>
+      · <a href="https://github.com/h9-tec/isnad-chrono">الشيفرة</a>
+      · الأرقام المشتقة بترخيص CC-BY-4.0 · لا يُعاد نشر نص الحديث.
+    </p>
+  </footer>
+
+  <script src="data.js"></script>
+  <script src="common.js"></script>
+</body>
+</html>

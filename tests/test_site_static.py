@@ -75,3 +75,80 @@ def test_explorer_hardening():
     tree = (SITE / "tree.js").read_text()
     assert "longestPathLayers" in tree and '"tabindex", 0' in tree
     assert 'role="img"' not in (SITE / "index.html").read_text()
+
+
+PAGES = ("index.html", "narrator.html", "atlas.html", "boards.html", "method.html")
+NAV = (("index.html", "المستكشف"), ("narrator.html", "الرواة"), ("atlas.html", "الأطلس"),
+       ("boards.html", "اللوائح"), ("method.html", "المنهج"))
+METHOD_CHECKS = ("cl_k2_rate_multi", "cl_k3_rate_multi", "cl_k2_prior_only_rate",
+                 "dating_method_median_abs_error", "dating_depth_median_abs_error",
+                 "dating_method_mean_abs_error", "dating_depth_mean_abs_error",
+                 "dating_method_bounded_mean_abs_error", "dating_method_coverage_90",
+                 "alignment_surface_found_rate", "alignment_control_surface_found_rate",
+                 "coverage_n_groups", "coverage_n_groups_multi_chain", "groups_complete_rate",
+                 "occurrence_chain_rate", "n_hadith_pages_cached")
+
+
+def _nav(html: str) -> str:
+    m = re.search(r'<nav class="site-nav"[^>]*>(.*?)</nav>', html, re.S)
+    assert m, "no site-nav"
+    return m.group(1)
+
+
+def test_every_page_has_nav_and_data_js():
+    for name in PAGES:
+        html = (SITE / name).read_text()
+        nav = _nav(html)
+        for href, label in NAV:
+            assert re.search(rf'<a href="{re.escape(href)}"[^>]*>{label}</a>', nav), (name, href)
+        assert len(re.findall(r"<a ", nav)) == 5, name
+        assert 'aria-current="page"' in nav, name
+        assert '<script src="data.js"></script>' in html, name
+        assert 'dir="rtl"' in html and 'name="viewport"' in html, name
+        for src in re.findall(r'<script[^>]+src="([^"]+)"', html):
+            assert (SITE / src).is_file(), (name, src)
+        for href in re.findall(r'<link[^>]+href="([^"]+)"', html):
+            assert (SITE / href).is_file(), (name, href)
+
+
+def test_method_page_checks_use_real_keys():
+    html = (SITE / "method.html").read_text()
+    keys = set(re.findall(r'data-check="([^"]+)"', html))
+    for k in METHOD_CHECKS:
+        assert k in keys, k
+    assert "https://huggingface.co/datasets/HeshamHaroon/isnad-chrono" in html
+    assert "https://github.com/h9-tec/isnad-chrono" in html and "https://hdith.com/" in html
+    assert len(re.findall(r"<li", html.split('id="steps-ar"')[1].split("</ol>")[0])) == 5
+    assert len(re.findall(r"<li", html.split('id="steps-en"')[1].split("</ol>")[0])) == 5
+    atlas = set(re.findall(r'data-check="([^"]+)"', (SITE / "atlas.html").read_text()))
+    assert {"cl_k2_rate_multi", "cl_k3_rate_multi", "dating_method_median_abs_error",
+            "dating_depth_median_abs_error", "alignment_surface_found_rate",
+            "alignment_control_surface_found_rate", "coverage_n_groups_multi_chain"} <= atlas
+    checks = ROOT / "release_hf/checks.json"
+    if checks.is_file():  # the release build is not tracked; assert keys when present
+        import json
+        real = set(json.loads(checks.read_text()))
+        assert keys | atlas <= real, sorted((keys | atlas) - real)
+
+
+def test_pages_wire_their_scripts():
+    pages = {"narrator.html": "narrator.js", "atlas.html": "atlas.js",
+             "boards.html": "boards.js", "method.html": "common.js"}
+    for page, js in pages.items():
+        assert f'<script src="{js}"></script>' in (SITE / page).read_text(), page
+    common = (SITE / "common.js").read_text()
+    for name in ("esc", "fillChecks", "narratorLink", "sortableTable"):
+        assert re.search(rf"\b{name}\b", common), name
+    nar = (SITE / "narrator.js").read_text()
+    assert "e.status === 404" in nar and "rawiUrl" in nar and "placeholder" in nar
+    boards = (SITE / "boards.js").read_text()
+    for b in ("top_cls", "earliest", "conflicts", "top_editors"):
+        assert b in boards, b
+    atlas = (SITE / "atlas.js").read_text()
+    assert "rate_nonleaf" in atlas and "cl_hist" in atlas
+
+
+def test_explorer_selects_within_component():
+    js = (SITE / "explorer.js").read_text()
+    assert "function selectNode(d, comp)" in js
+    assert "for (const c of state.layout.components)" not in js
