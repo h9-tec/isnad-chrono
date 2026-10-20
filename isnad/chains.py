@@ -24,9 +24,14 @@ from isnad import pageprops
 from isnad.build import _PARSE_ERRORS, _pages, read_page
 from isnad.dates import _DIACRITICS, _norm
 
-Tok = tuple  # ("R", rawi_id, name) | ("F", formula) | ("H",) | ("H", kind) | ("J",)
-# ("H",) is a ح; ("H", "و") an implicit transfer at a و-formula; ("H", "قال") a "وقال NAME:"
-# restart; ("J",) a join phrase (كلاهما ...) before the shared narrator.
+Tok = tuple
+# ("R", rawi_id, name)  narrator span
+# ("F", formula) | ("F", formula, name)  formula; with a name when "قال NAME:" attributes it
+#     to one of several parallel students ("قال إسحاق: أخبرنا، وقال زهير: حدثنا")
+# ("S",)  two narrator spans in sequence with no formula or connective between them
+# ("X", name)  a narrator span without a p-N slug
+# ("H",) a ح; ("H", "و") an implicit transfer at a و-formula; ("H", "قال") a "وقال NAME:"
+#     restart; ("J",) a join phrase (كلاهما ...) before the shared narrator.
 
 # Opening tags only: a formula span can wrap the narrator span that follows it, so span
 # bodies are never matched as a whole.
@@ -39,6 +44,12 @@ _HA_RE = re.compile(r"(?<![ء-ٟٮ-ۓ])ح(?![ء-ٟٮ-ۓ])")  # letters/harakat o
 _WAW_ROOTS = tuple(_norm(w) for w in ("وحدثن", "وأخبرن", "وأنبأن"))  # وحدثنا/ني, وأخبرنا/ني, وأنبأنا
 _JOIN_RE = re.compile(r"(?:^|\s)(?:كلاهما|كلهما|كلهم|جميعا|ثلاثتهم)(?:\s|[،,.]|$)[\s،,.-]*$")
 _RESTART_RE = re.compile(r"(?:^|\s)وقال\s+([^:،,.]+?)\s*:[\s،,.-]*$")
+_SAID_RE = re.compile(r"(?:^|\s)و?قال\s+([^:،,.]+?)\s*:[\s،,.-]*$")
+_WAW_RE = re.compile(r"(?<![ء-ي])و(?![ء-ي])")
+_CONNECTIVES = {_norm(w) for w in (
+    "أن", "أنه", "عن", "قال", "قالت", "سمعت", "سمع", "حدثني", "حدثنا", "حدثه", "حدثتني",
+    "أخبرني", "أخبرنا", "أخبره", "أخبرتني", "أنبأنا", "ثنا", "نا", "أنا")}
+_TWO_WORD_HEADS = {_norm(w) for w in ("عبد", "أبو", "أبي", "أبا", "ابن", "أم", "بنت")}
 MAX_VARIANTS = 64
 log = logging.getLogger(__name__)
 PLACEHOLDER_IDS = frozenset({1, 2})  # slugs p-1/p-2: unresolved/anonymous, no rawi page
@@ -76,12 +87,22 @@ def _gap_text(fragment: str) -> str:
     return " ".join(_norm(_html.unescape(_TAG_RE.sub(" ", fragment))).split())
 
 
+def _name_matches(name: str, data_name: str) -> bool:
+    """``name`` (normalised gap text) is a whole-word prefix of the narrator's data-name."""
+    words = name.split()
+    if not words or (words[0] in _TWO_WORD_HEADS and len(words) < 2):
+        return False
+    n = " ".join(words)
+    dn = " ".join(_norm(data_name).split())
+    cands = [dn, dn[1:]] if dn.startswith("و") else [dn]  # "وقتيبة بن سعيد" (parallel)
+    return any(c == n or c.startswith(n + " ") for c in cands)
+
+
 def _restart(toks: list[Tok], name: str) -> list[Tok]:
     """Tokens replaying the path down to the earlier narrator called ``name`` (or [])."""
-    want = name.split()[0] if name.split() else ""
     for i in range(len(toks) - 1, -1, -1):
         t = toks[i]
-        if t[0] == "R" and want and _norm(t[2]).split()[:1] == [want]:
+        if t[0] == "R" and _name_matches(name, t[2]):
             start = max((j + 1 for j in range(i) if toks[j][0] == "H"), default=0)
             return [x for x in toks[start:i + 1] if x[0] in ("R", "F")]
     return []
@@ -104,7 +125,10 @@ def tokenize(isnad_html: str) -> list[Tok]:
             end = len(html) if end < 0 else end
             f = " ".join(_NON_WORD_RE.sub(" ", _plain(html[m.end():end])).split())
             restart = _RESTART_RE.search(gap)
-            replay = _restart(toks, restart[1]) if restart else []
+            # "قال A: F1، وقال B: F2 NEXT" attributes formulas, it is not a restart
+            attributing = bool(toks) and toks[-1][0] == "F"
+            replay = _restart(toks, restart[1]) if restart and not attributing else []
+            said = _SAID_RE.search(gap)
             if replay:
                 toks += [("H", "قال")] + replay
             elif _JOIN_RE.search(gap) and any(t[0] == "R" for t in toks):
@@ -112,25 +136,40 @@ def tokenize(isnad_html: str) -> list[Tok]:
             elif (_norm(f).startswith(_WAW_ROOTS) and any(t[0] == "R" for t in toks)
                   and toks[-1][0] != "H"):
                 toks.append(("H", "و"))
-            toks.append(("F", f))
+            toks.append(("F", f, " ".join(said[1].split())) if said and not replay else ("F", f))
             pos = end
             continue
         close = html.find("</span>", m.end())
+        body = html[m.end():len(html) if close < 0 else close]
+        gap_raw = html[pos:m.start()]
         pos = len(html) if close < 0 else close + len("</span>")
+        name = _html.unescape(attrs.get("data-name", ""))
         slug = _SLUG_RE.fullmatch(attrs.get("data-rawi-slug", ""))
-        if slug:
-            toks.append(("R", int(slug[1]), _html.unescape(attrs.get("data-name", ""))))
+        if not slug:
+            toks.append(("X", name))
+            continue
+        if toks and toks[-1][0] == "R":  # two spans with no formula between them
+            gap = _plain(_TAG_RE.sub(" ", gap_raw))
+            text = _plain(_TAG_RE.sub("", body))
+            if not (name.startswith("و") or text.startswith("و") or _WAW_RE.search(gap)):
+                words = _NON_WORD_RE.sub(" ", gap).split()
+                conn = next((w for w in reversed(words) if _norm(w) in _CONNECTIVES), None)
+                toks.append(("F", conn) if conn else ("S",))  # sequential, not parallel
+        toks.append(("R", int(slug[1]), name))
     while toks and toks[-1][0] in ("H", "J"):
         toks.pop()
     return toks
 
 
-Level = list[tuple[int, str | None]]  # parallel narrators sharing one term
+# parallel narrators sharing one term: (rawi_id, term, {student_id: term} overrides | None)
+Level = list[tuple[int, str | None, dict | None]]
 
 
 def _segments(tokens: list[Tok]) -> list[list[Level]]:
     segs: list[list[Level]] = [[]]
-    formula, prev = None, None
+    names = {t[1]: t[2] for t in tokens if t[0] == "R"}
+    fs: list[Tok] = []  # formula tokens since the last narrator
+    prev = None
     open_start, cont = 0, None  # cont: index of the segment after a join phrase
 
     def close_join() -> None:
@@ -148,17 +187,31 @@ def _segments(tokens: list[Tok]) -> list[list[Level]]:
             if t[0] == "J":
                 cont = len(segs)
             segs.append([])
-            formula, prev = None, None
-        elif t[0] == "F":
-            formula, prev = t[1], "F"
+            fs, prev = [], None
+        elif t[0] in ("F", "S"):
+            fs.append(t)
+            prev = "F"
         elif t[0] == "R":
             seg = segs[-1]
             if prev == "R" and seg:  # parallel: no formula since the last narrator
-                if all(t[1] != r for r, _ in seg[-1]):
-                    seg[-1].append((t[1], seg[-1][0][1]))
+                if all(t[1] != r for r, *_ in seg[-1]):
+                    seg[-1].append((t[1], seg[-1][0][1], seg[-1][0][2]))
             else:
-                seg.append([(t[1], _term(formula))])
-            formula, prev = None, "R"
+                last = fs[-1] if fs else None
+                term = _term(last[1]) if last and last[0] == "F" else None
+                ov = {}
+                for f in fs:  # formulas attributed to one of the parallel students
+                    if f[0] == "F" and len(f) > 2 and seg:
+                        for sid, *_ in seg[-1]:
+                            if _name_matches(f[2], names.get(sid, "")):
+                                ov[sid] = _term(f[1])
+                if seg and len(seg[-1]) == 1 and seg[-1][0][0] == t[1]:
+                    # "عن أبيه قال: سمعت أبي": the same narrator again, keep the inner formula
+                    old = seg[-1][0]
+                    seg[-1][0] = (t[1], term or old[1], ov or old[2])
+                else:
+                    seg.append([(t[1], term, ov or None)])
+            fs, prev = [], "R"
     close_join()
     return [s for s in segs if s]
 
@@ -167,15 +220,20 @@ def _variants(levels: list[Level], compiler_id: int | None, unjoined: bool):
     for combo in itertools.product(*levels):
         path = list(reversed(combo))  # earliest first
         if compiler_id is not None:
-            path.append((compiler_id, None))
-        yield Chain([Link(r, i, term) for i, (r, term) in enumerate(path)], unjoined)
+            path.append((compiler_id, None, None))
+        links = []
+        for i, (r, term, ov) in enumerate(path):
+            if ov and i + 1 < len(path):
+                term = ov.get(path[i + 1][0], term)
+            links.append(Link(r, i, term))
+        yield Chain(links, unjoined)
 
 
 def _join(seg: list[Level], final: list[Level]) -> list[Level] | None:
     for k in range(len(seg) - 1, -1, -1):
-        ids = {r for r, _ in seg[k]}
+        ids = {r for r, *_ in seg[k]}
         for j, level in enumerate(final):
-            if ids & {r for r, _ in level}:
+            if ids & {r for r, *_ in level}:
                 return seg[:k + 1] + final[j + 1:]
     return None
 
@@ -183,7 +241,7 @@ def _join(seg: list[Level], final: list[Level]) -> list[Level] | None:
 def _below_compiler(seg: list[Level], compiler_id: int | None) -> list[Level]:
     """Drop the compiler's own span (and any later transmitters read before it)."""
     for k in range(len(seg) - 1, -1, -1):
-        if any(r == compiler_id for r, _ in seg[k]):
+        if any(r == compiler_id for r, *_ in seg[k]):
             return seg[k + 1:]
     return seg
 
@@ -276,21 +334,48 @@ def _complete(c: Chain, flat: list[dict], stats: Counter) -> Chain:
     return Chain([Link(r, k, term) for k, (r, term) in enumerate(path)], c.unjoined, "html+flat")
 
 
+def _fill_sequential(toks: list[Tok], flat: list[dict], stats: Counter) -> list[Tok]:
+    """Give ("S",) markers the flat formula when the flat isnad has both narrators in order."""
+    flat_ids = [int(n["slug"][2:]) for n in flat]
+    out = list(toks)
+    for i, t in enumerate(toks):
+        if t[0] != "S":
+            continue
+        stats["sequential_unannotated"] += 1
+        student = next((x[1] for x in reversed(toks[:i]) if x[0] == "R"), None)
+        teacher = next((x[1] for x in toks[i + 1:] if x[0] == "R"), None)
+        formula = None
+        if student in flat_ids and teacher in flat_ids:
+            k = flat_ids.index(teacher)
+            if k < flat_ids.index(student):
+                formula = flat[k].get("formula")
+        out[i] = ("F", formula or "")
+    return out
+
+
 def hadith_chains(h: dict, stats: Counter | None = None) -> list[Chain]:
     """Chains for one ``props["hadith"]``; falls back to the flat isnad if no narrator spans."""
     stats = Counter() if stats is None else stats
     toks = tokenize(h.get("isnad_html") or "")
     flat = h.get("isnad") or []
-    if any(t[0] == "R" for t in toks):
-        flat_ids = [int(n["slug"][2:]) for n in flat]
+    flat_ids = [int(n["slug"][2:]) for n in flat]
+    first_r = next((i for i, t in enumerate(toks) if t[0] == "R"), None)
+    slugless = first_r is not None and any(t[0] == "X" for t in toks[first_r:])
+    stats["slugless_spans"] += sum(t[0] == "X" for t in toks)
+    if first_r is not None and not (slugless and flat):
         for t in toks:
             if t[0] in ("H", "J"):
                 stats[{("H",): "ح transfers", ("H", "و"): "implicit و transfers",
                        ("H", "قال"): "وقال restarts", ("J",): "join phrases"}[t]] += 1
-        chains = build_chains(_resolve_placeholders(toks, flat_ids), _compiler_id(h), stats)
+        toks = _fill_sequential(_resolve_placeholders(toks, flat_ids), flat, stats)
+        chains = build_chains(toks, _compiler_id(h), stats)
+        if slugless:  # a narrator is missing and there is no flat isnad to fall back on
+            return [Chain(c.links, True, c.source) for c in chains]
         return [_complete(c, flat, stats) for c in chains] if flat else chains
     if not flat:
         return []
+    if slugless:
+        stats["slugless → flat"] += 1
     links = [Link(int(n["slug"][2:]), i, _term(n.get("formula"))) for i, n in enumerate(flat)]
     return [Chain(links, False, "flat")]
 
@@ -358,6 +443,7 @@ def run_chains(cache_root, out, limit: int | None = None) -> pd.DataFrame:
               "flat isnad not among chains", "chains with placeholder id (p-1/p-2)",
               "truncated completed", "truncated_unmatched", "ح transfers",
               "implicit و transfers", "وقال restarts", "join phrases", "capped hadith",
+              "sequential_unannotated", "slugless_spans", "slugless → flat",
               "chains without compiler link", "errors"):
         print(f"{k}: {stats[k]}")
     return df

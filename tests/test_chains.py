@@ -279,3 +279,95 @@ def test_variants_capped_at_64():
 def test_chain_without_compiler_kept():
     h = {"isnad_html": _f("حدثنا") + _r(8) + _f("عن") + _r(5), "isnad": []}
     assert paths(hadith_chains(h)) == [(5, 8)]
+
+
+# --- fixes: parallel needs a conjunction, attribution guard, slugless spans --------------
+
+def _rn(i, name, text="اسم"):
+    return (f'<span class="hp-rawi" data-kind="narrator" data-rawi-slug="p-{i}" '
+            f'data-name="{name}">{text} </span>')
+
+
+def _terms(c):
+    return {link.rawi_id: link.term for link in c.links}
+
+
+def test_abudawud_96145_an_is_sequential_not_parallel(fx_gz):
+    # "يزيد بن أبي زياد أن عبد الرحمن بن أبي ليلى حدثه أن عبد الله بن عمر"
+    h = hadith(fx_gz("hadith_abudawud_96145_sequential.html.gz"))
+    ch = hadith_chains(h)
+    assert paths(ch) == [tuple(int(n["slug"][2:]) for n in h["isnad"])]
+    assert paths(ch) == [(3807, 3234, 7037, 2110, 461, 2577)]
+    assert _terms(ch[0])[3234] == "أن"
+
+
+def test_muslim_17428_plain_an_and_repeat_no_self_loop(fx_gz):
+    # "عن أبي بكر بن عبد الله بن قيس، عن أبيه قال: سمعت أبي" (plain-text عن); also
+    # "قال قتيبة: حدثنا، وقال يحيى: أخبرنا جعفر" attributes formulas, no restart
+    h = hadith(fx_gz("hadith_muslim_17428_repeat.html.gz"))
+    ch = hadith_chains(h)
+    assert paths(ch) == [(3856, 219, 4019, 1153, 5187, 6116), (3856, 219, 4019, 1153, 7021, 6116)]
+    for c in ch:
+        ids = [link.rawi_id for link in c.links]
+        assert all(a != b for a, b in zip(ids, ids[1:]))
+        assert _terms(c)[3856] == "سمعت"
+    by_student = {c.links[4].rawi_id: _terms(c)[1153] for c in ch}
+    assert by_student == {5187: "حدثنا", 7021: "أخبرنا"}  # قتيبة: حدثنا، يحيى: أخبرنا
+
+
+def test_muslim_16577_formulas_attributed_per_student(fx_gz):
+    # "زهير بن حرب، وإسحاق بن إبراهيم قال إسحاق: أخبرنا، وقال زهير: حدثنا جرير"
+    h = hadith(fx_gz("hadith_muslim_16577_attribution.html.gz"))
+    toks = tokenize(h["isnad_html"])
+    assert not any(t[0] == "H" for t in toks)
+    ch = hadith_chains(h)
+    assert len(ch) == 2
+    # term on Jarir (1132) = how the student received from him
+    by_student = {c.links[4].rawi_id: _terms(c)[1132] for c in ch}
+    assert by_student == {549: "أخبرنا", 2102: "حدثنا"}
+
+
+def test_adjacent_spans_parallel_only_with_conjunction():
+    par_name = _f("حدثنا") + _r(1) + _rn(2, "وفلان")
+    par_gap = _f("حدثنا") + _r(1) + "، وَ" + _rn(2, "فلان")
+    seq = _f("حدثنا") + _r(1) + " أَنَّ " + _rn(2, "فلان")
+    assert paths(build_chains(tokenize(par_name), 7)) == [(1, 7), (2, 7)]
+    assert paths(build_chains(tokenize(par_gap), 7)) == [(1, 7), (2, 7)]
+    assert short(tokenize(seq)) == [("F", "حدثنا"), ("R", 1), ("F", "أن"), ("R", 2)]
+    assert paths(build_chains(tokenize(seq), 7)) == [(2, 1, 7)]
+
+
+def test_sequential_unannotated_uses_flat_formula():
+    html = _f("حدثنا") + _r(1) + " ، " + _rn(2, "فلان")
+    assert short(tokenize(html)) == [("F", "حدثنا"), ("R", 1), ("S",), ("R", 2)]
+    stats = Counter()
+    ch = hadith_chains({"isnad_html": html, "isnad": _flat((2, "سمعت"), (1, "حدثنا"), (7, None))},
+                       stats)
+    assert [(link.rawi_id, link.term) for link in ch[0].links] == [(2, "سمعت"), (1, "حدثنا"),
+                                                                    (7, None)]
+    assert stats["sequential_unannotated"] == 1
+    ch = hadith_chains({"isnad_html": html, "isnad": _flat((9, None))})
+    assert [(link.rawi_id, link.term) for link in ch[0].links] == [(2, None), (1, "حدثنا"),
+                                                                    (9, None)]
+
+
+def test_restart_name_needs_two_words_after_abd():
+    html = (_f("حدثنا") + _rn(1, "عبد الله بن يوسف") + _f("حدثنا") + _r(2) + " وَقَالَ عَبْدُ : "
+            + _f("حدثنا") + _r(3))
+    assert not any(t[0] == "H" for t in tokenize(html))
+
+
+def test_slugless_span_prefers_flat(fx_gz):
+    h = hadith(fx_gz("hadith_331148_slugless.html.gz"))
+    stats = Counter()
+    ch = hadith_chains(h, stats)
+    assert stats["slugless_spans"] == 1
+    assert [c.source for c in ch] == ["flat"]
+    assert paths(ch) == [tuple(int(n["slug"][2:]) for n in h["isnad"])]
+
+
+def test_slugless_span_without_flat_marks_unjoined():
+    html = (_f("حدثنا") + _r(1) + _f("عن") + '<span class="hp-rawi" data-name="مجهول">م</span>'
+            + _f("عن") + _r(3))
+    ch = hadith_chains({"isnad_html": html, "isnad": []})
+    assert [c.unjoined for c in ch] == [True]
