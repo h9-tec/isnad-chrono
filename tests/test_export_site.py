@@ -1,11 +1,17 @@
 import gzip
 import json
 
+from pathlib import Path
+
+import jsonschema
 import pandas as pd
 import pytest
 
-from isnad.export_site import (check_keys, meta_table, narrators_table, run_export_site,
-                               search_key, write_json)
+from isnad import tree
+from isnad.edits import EDIT_COLS
+from isnad.export_site import (SiteContext, atlas_table, check_keys, group_json, group_path,
+                               meta_table, narrator_detail, narrator_path, narrators_table,
+                               run_export_site, search_key, write_json)
 
 
 @pytest.fixture
@@ -154,3 +160,150 @@ def test_truncated_gz_is_skipped(tmp_data):
     with mock.patch("isnad.export_site.parse_hadith", return_value=rec):
         books = {b["slug"]: b["title"] for b in meta_table(tmp_data)["books"]}
     assert books["b-1"] == "صحيح البخاري"
+
+
+# ---- Task 2: groups, narrator details, atlas ------------------------------------------------
+
+_CHAINS = {  # hadith_id -> [(rawi_id, term)…], Companion first
+    21: [(1, "عن"), (2, "حدثنا"), (3, "أخبرنا"), (10, "حدثنا")],
+    22: [(1, "عن"), (2, "عن"), (4, "حدثنا"), (10, "حدثنا")],
+    23: [(1, "عن"), (2, None), (4, "سمعت"), (11, "حدثنا")],
+    24: [(1, "عن"), (2, "حدثنا"), (3, "أخبرنا"), (10, "حدثنا")],
+    25: [(7, "عن"), (4, "عن"), (11, "حدثنا")],
+}
+
+
+@pytest.fixture
+def site_data(tmp_data):
+    """tmp_data plus the Task 2 inputs: tk-5 (one root, CL 2), tk-6 (roots 1, 7), tk-7 (no chains)."""
+    d = tmp_data
+    rows = [{"hadith_id": h, "chain_no": 0, "position": i, "rawi_id": r, "term": t,
+             "unjoined": False, "source": "html"}
+            for h, ch in _CHAINS.items() for i, (r, t) in enumerate(ch)]
+    pd.DataFrame(rows).to_parquet(d / "chains.parquet")
+    pd.DataFrame({
+        "group_id": ["tk-5", "tk-5", "tk-5", "tk-6", "tk-6", "tk-7"],
+        "hadith_id": [21, 22, 23, 24, 25, 26],
+        "book_slug": ["b-1", "b-2", "b-2", "b-1", "b-3", "b-1"],
+        "numbering": ["1", "2", "3", "4", "5", "6"]}).to_parquet(d / "occurrences.parquet")
+    pd.DataFrame({"group_id": ["tk-5", "tk-6", "tk-7"],
+                  "complete": [True, False, True]}).to_parquet(d / "groups.parquet")
+    pd.DataFrame({
+        "rawi_id": [5, 2, 7, 1], "birth_lo": [10.0, 20, 50, None], "birth_hi": [20.0, 30, 60, None],
+        "death_lo": [98.0, 100, 130, 40], "death_hi": [102.0, 110, 140, 60],
+        "death_mode": [100.0, 105, 135, 50], "support": [4, 3, 2, 0],
+        "method": ["known", "known", "inferred", "prior_only"]}
+    ).to_parquet(d / "rawi_dates_inferred.parquet")
+    pd.DataFrame({"group_id": ["tk-5"], "hadith_ids": [[24, 25, 26]]}).to_parquet(
+        d / "shawahid.parquet")
+    tree.run_tree(d / "chains.parquet", d / "occurrences.parquet", d / "groups.parquet",
+                  d / "rawi_dates_inferred.parquet", d, shawahid_path=d / "shawahid.parquet")
+    e = pd.DataFrame([
+        ["tk-5", 1, 4, 2, "sub", "attributed", False, True, False, 1, 1, 2],
+        ["tk-5", 2, 3, 2, "del", "partial", None, True, False, 1, 1, 2],
+        ["tk-5", 3, None, None, "ins", "no_chain", None, False, False, 1, 0, 2],
+        ["tk-5", 4, 2, 1, "sub", "ambiguous", True, False, False, 2, 2, 1],
+        ["tk-6", 1, 4, 1, "sub", "attributed", False, False, False, 1, 1, 1],
+    ], columns=EDIT_COLS)
+    e["introduced_by_rawi_id"] = e.introduced_by_rawi_id.astype("Int64")
+    e["generation_depth"] = e.generation_depth.astype("Int64")
+    e.to_parquet(d / "edits.parquet")
+    pd.DataFrame({"depth": [0, 1], "n_transmissions": [0, 3], "n_edits": [0, 1],
+                  "rate": pd.array([None, 1 / 3], dtype="Float64"), "n_edits_nonleaf": [0, 1],
+                  "rate_nonleaf": pd.array([None, 1 / 3], dtype="Float64")}
+                 ).to_parquet(d / "edit_rates.parquet")
+    pd.DataFrame({"teacher_id": [2, 9], "student_id": [4, 2], "weight": [1, 1],
+                  "cls": ["explicit", "explicit"], "reason": ["negative_cycle", "death_gap"],
+                  "pass": [1, 1], "round": [1, 1]}).to_parquet(d / "dropped_links.parquet")
+    return d
+
+
+def test_group_json_matches_schema_and_cl(site_data):
+    g = group_json("tk-5", SiteContext(site_data))
+    schema = json.loads(Path("tests/fixtures/site_group_schema.json").read_text(encoding="utf-8"))
+    jsonschema.validate(g, schema)
+    assert g["cl"]["k2"]["id"] == 2 and g["roots"] == [1]
+    assert g["cl"]["k2"] == {"id": 2, "lo": 100, "hi": 110, "method": "known", "all_chains": True}
+    assert "k3" not in g["cl"]
+    assert g["terms"]["2-4"] == "عن"
+    assert g["terms"]["2-3"] == "حدثنا" and "4-11" in g["terms"] and g["terms"]["1-2"] == "عن"
+    assert g["edits"]["by_node"]["4"] == [{"seg": 1, "type": "sub", "status": "attributed"}]
+    assert g["edits"]["by_node"]["2"] == [{"seg": 4, "type": "sub", "status": "ambiguous"}]
+    assert set(g["edits"]["by_node"]) == {"2", "4"}
+    assert (g["edits"]["attributed"], g["edits"]["partial"], g["edits"]["no_chain"]) == (1, 1, 1)
+    assert g["chains"] == [[1, 2, 3, 10], [1, 2, 4, 10], [1, 2, 4, 11]]
+    assert g["books"] == {"b-1": [21], "b-2": [22, 23]}
+    assert g["complete"] is True and g["all_chained"] is True
+    assert g["shawahid"] == [1, 7]
+    n2 = next(n for n in g["nodes"] if n["id"] == 2)
+    assert n2 == {"id": 2, "root": 1, "depth": 1, "k": 2, "n_desc": 3, "cl2": True, "cl3": False,
+                  "pcl2": False, "pcl3": False}
+
+
+def test_group_json_two_roots(site_data):
+    g = group_json("tk-6", SiteContext(site_data))
+    assert g["roots"] == [1, 7] and {n["root"] for n in g["nodes"]} == {1, 7}
+    assert g["cl"] == {} and g["shawahid"] == []
+
+
+def test_group_json_without_chains(site_data):
+    g = group_json("tk-7", SiteContext(site_data))     # occurrences only
+    assert g["chains"] == [] and g["nodes"] == [] and g["cl"] == {}
+    assert g["roots"] == [] and g["terms"] == {} and g["all_chained"] is False
+    assert g["books"] == {"b-1": [26]}
+
+
+def test_narrator_detail(site_data):
+    ctx = SiteContext(site_data)
+    n2 = narrator_detail(2, ctx)
+    assert n2["teachers"] == [[1, 4]]
+    assert n2["students"] == [[3, 2], [4, 2]]
+    assert n2["cl_groups"] == [["tk-5", 100, 110]]
+    assert n2["dropped"] == [[4, "negative_cycle"], [9, "death_gap"]]
+    n404 = narrator_detail(404, ctx)
+    assert n404 == {"teachers": [], "students": [], "cl_groups": [], "dropped": []}
+
+
+def test_narrator_detail_written_for_every_chain_narrator(site_data, tmp_path):
+    run_export_site(str(site_data), str(tmp_path / "out"))
+    for rid in (1, 2, 3, 4, 7, 10, 11):
+        assert (tmp_path / f"out/narrator/{rid % 100:02d}/{rid}.json").exists()
+    for gid in ("tk-5", "tk-6", "tk-7"):
+        assert (tmp_path / "out" / group_path(gid)).exists()
+    assert (tmp_path / "out/atlas.json").exists()
+
+
+def test_atlas(site_data):
+    a = atlas_table(SiteContext(site_data))
+    assert a["cl_hist"] == {"all": [[100, 1]], "b-1": [[100, 1]], "b-2": [[100, 1]]}
+    assert a["drift"][1] == {"depth": 1, "n_transmissions": 3, "n_edits": 1, "rate": 0.333,
+                             "n_edits_nonleaf": 1, "rate_nonleaf": 0.333}
+    assert a["drift"][0]["rate"] is None
+    assert a["boards"]["top_cls"] == [[2, 1]]
+    assert a["boards"]["earliest"] == [["tk-5", 2, 100, 110]]
+    assert a["boards"]["conflicts"] == [[7, 120, 130, 140]]  # 5 (100 in 98-102) is consistent
+    assert a["boards"]["top_editors"] == [[4, 2, 3]]  # 2 attributed, 3 chains
+
+
+def test_atlas_skips_prior_only(site_data):
+    rd = pd.read_parquet(site_data / "report_dates.parquet")
+    rd["cl_k2_date_method"] = pd.array(["prior_only"] * len(rd), dtype="string")
+    rd.to_parquet(site_data / "report_dates.parquet")
+    a = atlas_table(SiteContext(site_data))
+    assert a["cl_hist"] == {"all": []} and a["boards"]["earliest"] == []
+
+
+def test_shard_paths():
+    assert group_path("tk-7") == Path("groups/07/tk-7.json")
+    assert group_path("tk-1234") == Path("groups/34/tk-1234.json")
+    assert group_path("tg-57182") == Path("groups/82/tg-57182.json")
+    assert narrator_path(3) == Path("narrator/03/3.json")
+    assert narrator_path(12345) == Path("narrator/45/12345.json")
+
+
+def test_page_weight_on_real_export():
+    out = Path("site_data")
+    if not out.exists():
+        pytest.skip("no real export")
+    assert (out / "narrators.json").stat().st_size <= 3_000_000
+    assert max(p.stat().st_size for p in out.glob("groups/*/*.json")) <= 200_000

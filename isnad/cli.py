@@ -130,8 +130,15 @@ def main(argv=None) -> None:
 
     if args.cmd == "export-site":
         from isnad import export_site
-        for name, n in export_site.run_export_site(args.data_dir, args.out, args.checks).items():
-            print(name, n, "bytes")
+        man = export_site.run_export_site(args.data_dir, args.out, args.checks)
+        for name, n in man.items():
+            if "/" not in name:
+                print(name, n, "bytes")
+        for kind in ("groups", "narrator", "search"):
+            sizes = [n for name, n in man.items() if name.startswith(kind + "/")]
+            if sizes:
+                print(f"{kind}/: {len(sizes)} files, {sum(sizes)} bytes, largest {max(sizes)}")
+        print(f"total: {len(man)} files, {sum(man.values())} bytes")
         return
 
     if args.cmd == "export-hf":

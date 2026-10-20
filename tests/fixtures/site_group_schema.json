@@ -1,0 +1,74 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "isnad-chrono site group file (spec 2026-10-20-site-design §3)",
+  "type": "object",
+  "required": ["id", "complete", "all_chained", "books", "chains", "roots", "nodes", "cl",
+               "edits", "terms", "shawahid"],
+  "additionalProperties": false,
+  "$defs": {
+    "id": {"type": "integer"},
+    "year": {"type": ["integer", "null"]},
+    "cl": {
+      "type": "object",
+      "required": ["id", "lo", "hi", "method", "all_chains"],
+      "additionalProperties": false,
+      "properties": {
+        "id": {"$ref": "#/$defs/id"},
+        "lo": {"$ref": "#/$defs/year"},
+        "hi": {"$ref": "#/$defs/year"},
+        "method": {"type": ["string", "null"]},
+        "all_chains": {"type": ["boolean", "null"]}
+      }
+    }
+  },
+  "properties": {
+    "id": {"type": "string", "pattern": "^t[kg]-[0-9]+$"},
+    "complete": {"type": ["boolean", "null"]},
+    "all_chained": {"type": ["boolean", "null"]},
+    "books": {"type": "object",
+              "additionalProperties": {"type": "array", "items": {"$ref": "#/$defs/id"}}},
+    "chains": {"type": "array",
+               "items": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/id"}}},
+    "roots": {"type": "array", "items": {"$ref": "#/$defs/id"}},
+    "nodes": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "root", "depth", "k", "n_desc", "cl2", "cl3", "pcl2", "pcl3"],
+        "additionalProperties": false,
+        "properties": {
+          "id": {"$ref": "#/$defs/id"}, "root": {"$ref": "#/$defs/id"},
+          "depth": {"type": "integer"}, "k": {"type": "integer"}, "n_desc": {"type": "integer"},
+          "cl2": {"type": "boolean"}, "cl3": {"type": "boolean"},
+          "pcl2": {"type": "boolean"}, "pcl3": {"type": "boolean"}
+        }
+      }
+    },
+    "cl": {"type": "object", "additionalProperties": false,
+           "properties": {"k2": {"$ref": "#/$defs/cl"}, "k3": {"$ref": "#/$defs/cl"}}},
+    "edits": {
+      "type": "object",
+      "required": ["attributed", "ambiguous", "partial", "cross_root", "no_chain", "by_node"],
+      "properties": {
+        "attributed": {"type": "integer"}, "ambiguous": {"type": "integer"},
+        "partial": {"type": "integer"}, "cross_root": {"type": "integer"},
+        "no_chain": {"type": "integer"}, "no_common_node": {"type": "integer"},
+        "by_node": {
+          "type": "object",
+          "propertyNames": {"pattern": "^[0-9]+$"},
+          "additionalProperties": {
+            "type": "array",
+            "items": {"type": "object", "required": ["seg", "type", "status"],
+                      "additionalProperties": false,
+                      "properties": {"seg": {"type": "integer"}, "type": {"type": "string"},
+                                     "status": {"enum": ["attributed", "ambiguous"]}}}
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "terms": {"type": "object", "propertyNames": {"pattern": "^[0-9]+-[0-9]+$"},
+              "additionalProperties": {"type": "string"}},
+    "shawahid": {"type": "array", "items": {"$ref": "#/$defs/id"}}
+  }
+}
