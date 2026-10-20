@@ -1,0 +1,93 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "isnad-chrono site narrator detail (spec §3)",
+  "type": "object",
+  "required": [
+    "teachers",
+    "students",
+    "cl_groups",
+    "dropped"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "teachers": {
+      "type": "array",
+      "maxItems": 20,
+      "items": {
+        "type": "array",
+        "prefixItems": [
+          {
+            "type": "integer"
+          },
+          {
+            "type": "integer"
+          }
+        ],
+        "minItems": 2,
+        "maxItems": 2
+      }
+    },
+    "students": {
+      "type": "array",
+      "maxItems": 20,
+      "items": {
+        "type": "array",
+        "prefixItems": [
+          {
+            "type": "integer"
+          },
+          {
+            "type": "integer"
+          }
+        ],
+        "minItems": 2,
+        "maxItems": 2
+      }
+    },
+    "cl_groups": {
+      "type": "array",
+      "items": {
+        "type": "array",
+        "minItems": 3,
+        "maxItems": 3,
+        "prefixItems": [
+          {
+            "type": "string",
+            "pattern": "^t[kg]-[0-9]+$"
+          },
+          {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          {
+            "type": [
+              "integer",
+              "null"
+            ]
+          }
+        ]
+      }
+    },
+    "dropped": {
+      "type": "array",
+      "items": {
+        "type": "array",
+        "minItems": 2,
+        "maxItems": 2,
+        "prefixItems": [
+          {
+            "type": "integer"
+          },
+          {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        ]
+      }
+    }
+  }
+}

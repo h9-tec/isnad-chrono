@@ -203,6 +203,7 @@ def site_data(tmp_data):
         ["tk-5", 2, 3, 2, "del", "partial", None, True, False, 1, 1, 2],
         ["tk-5", 3, None, None, "ins", "no_chain", None, False, False, 1, 0, 2],
         ["tk-5", 4, 2, 1, "sub", "ambiguous", True, False, False, 2, 2, 1],
+        ["tk-5", 5, 99, 3, "ins", "attributed", False, True, False, 1, 1, 2],  # carrier-only
         ["tk-6", 1, 4, 1, "sub", "attributed", False, False, False, 1, 1, 1],
     ], columns=EDIT_COLS)
     e["introduced_by_rawi_id"] = e.introduced_by_rawi_id.astype("Int64")
@@ -220,8 +221,7 @@ def site_data(tmp_data):
 
 def test_group_json_matches_schema_and_cl(site_data):
     g = group_json("tk-5", SiteContext(site_data))
-    schema = json.loads(Path("tests/fixtures/site_group_schema.json").read_text(encoding="utf-8"))
-    jsonschema.validate(g, schema)
+    jsonschema.validate(g, _schema("group"))
     assert g["cl"]["k2"]["id"] == 2 and g["roots"] == [1]
     assert g["cl"]["k2"] == {"id": 2, "lo": 100, "hi": 110, "method": "known", "all_chains": True}
     assert "k3" not in g["cl"]
@@ -230,7 +230,10 @@ def test_group_json_matches_schema_and_cl(site_data):
     assert g["edits"]["by_node"]["4"] == [{"seg": 1, "type": "sub", "status": "attributed"}]
     assert g["edits"]["by_node"]["2"] == [{"seg": 4, "type": "sub", "status": "ambiguous"}]
     assert set(g["edits"]["by_node"]) == {"2", "4"}
-    assert (g["edits"]["attributed"], g["edits"]["partial"], g["edits"]["no_chain"]) == (1, 1, 1)
+    assert set(g["edits"]["by_node"]) <= {str(n["id"]) for n in g["nodes"]}
+    assert g["edits"]["by_node_external"] == [
+        {"id": 99, "seg": 5, "type": "ins", "status": "attributed"}]
+    assert (g["edits"]["attributed"], g["edits"]["partial"], g["edits"]["no_chain"]) == (2, 1, 1)
     assert g["chains"] == [[1, 2, 3, 10], [1, 2, 4, 10], [1, 2, 4, 11]]
     assert g["books"] == {"b-1": [21], "b-2": [22, 23]}
     assert g["complete"] is True and g["all_chained"] is True
@@ -276,13 +279,15 @@ def test_narrator_detail_written_for_every_chain_narrator(site_data, tmp_path):
 def test_atlas(site_data):
     a = atlas_table(SiteContext(site_data))
     assert a["cl_hist"] == {"all": [[100, 1]], "b-1": [[100, 1]], "b-2": [[100, 1]]}
-    assert a["drift"][1] == {"depth": 1, "n_transmissions": 3, "n_edits": 1, "rate": 0.333,
-                             "n_edits_nonleaf": 1, "rate_nonleaf": 0.333}
+    assert a["drift"][1] == {"depth": 1, "n_transmissions": 3, "n_edits": 1, "rate": 0.3333,
+                             "n_edits_nonleaf": 1, "rate_nonleaf": 0.3333}
     assert a["drift"][0]["rate"] is None
     assert a["boards"]["top_cls"] == [[2, 1]]
     assert a["boards"]["earliest"] == [["tk-5", 2, 100, 110]]
-    assert a["boards"]["conflicts"] == [[7, 120, 130, 140]]  # 5 (100 in 98-102) is consistent
-    assert a["boards"]["top_editors"] == [[4, 2, 3]]  # 2 attributed, 3 chains
+    # narrators by dropped dating links touching them: 2 (two links), then 4 and 9; 2 has no dy
+    assert a["boards"]["conflicts"] == [[2, 2, None], [4, 1, None], [9, 1, None]]
+    assert a["boards"]["top_editors"] == [[4, 2, 3], [99, 1, 0]]  # attributed, n_chains
+    jsonschema.validate(a, _schema("atlas"))
 
 
 def test_atlas_skips_prior_only(site_data):
@@ -301,9 +306,70 @@ def test_shard_paths():
     assert narrator_path(12345) == Path("narrator/45/12345.json")
 
 
+def _schema(name):
+    return json.loads(Path(f"tests/fixtures/site_{name}_schema.json").read_text(encoding="utf-8"))
+
+
+def test_narrator_schema(site_data):
+    ctx = SiteContext(site_data)
+    for rid in (1, 2, 3, 4, 7, 10, 11, 404):
+        jsonschema.validate(narrator_detail(rid, ctx), _schema("narrator"))
+
+
+def test_years_rounded_outward(site_data):
+    rd = pd.read_parquet(site_data / "report_dates.parquet")
+    rd.loc[rd.group_id == "tk-5", ["cl_k2_date_lo", "cl_k2_date_hi"]] = [69.5, 77.5]
+    rd.to_parquet(site_data / "report_dates.parquet")
+    dt = pd.read_parquet(site_data / "rawi_dates_inferred.parquet")
+    dt.loc[dt.rawi_id == 1, ["death_lo", "death_hi", "birth_lo", "birth_hi"]] = [-0.5, 77.5, -3.2, -0.5]
+    dt.to_parquet(site_data / "rawi_dates_inferred.parquet")
+    ctx = SiteContext(site_data)
+    cl = group_json("tk-5", ctx)["cl"]["k2"]
+    assert (cl["lo"], cl["hi"]) == (69, 78)
+    assert narrator_detail(2, ctx)["cl_groups"] == [["tk-5", 69, 78]]
+    a = atlas_table(ctx)
+    assert a["boards"]["earliest"] == [["tk-5", 2, 69, 78]] and a["cl_hist"]["all"] == [[70, 1]]
+    n1 = {r["id"]: r for r in narrators_table(site_data)}[1]
+    assert (n1["dlo"], n1["dhi"], n1["blo"], n1["bhi"]) == (-1, 78, -4, 0)
+
+
+def test_terms_from_collapsed_duplicate_use_row_next_to_student(site_data):
+    ch = pd.read_parquet(site_data / "chains.parquet")
+    dup = pd.DataFrame([{"hadith_id": 22, "chain_no": 0, "position": 1.5, "rawi_id": 2,
+                         "term": "قال", "unjoined": False, "source": "html"}])
+    ch = pd.concat([ch.astype({"position": float}), dup]).sort_values(["hadith_id", "position"])
+    ch["position"] = ch.groupby(["hadith_id", "chain_no"]).cumcount()
+    ch.to_parquet(site_data / "chains.parquet")
+    g = group_json("tk-5", SiteContext(site_data))
+    assert g["chains"][1] == [1, 2, 4, 10] and g["terms"]["2-4"] == "قال"
+
+
+def test_export_refuses_out_over_data(site_data):
+    with pytest.raises(ValueError, match="data dir"):
+        run_export_site(str(site_data), str(site_data))
+    with pytest.raises(ValueError, match="data dir"):
+        run_export_site(str(site_data), str(site_data.parent))
+    with pytest.raises(ValueError, match="cwd|repo root"):
+        run_export_site(str(site_data), ".")
+
+
+def test_reexport_drops_stale_groups(site_data, tmp_path):
+    out = tmp_path / "out"
+    stale = out / "groups/99/tk-99.json"
+    stale.parent.mkdir(parents=True)
+    stale.write_text("{}")
+    (out / "keep.txt").write_text("x")
+    run_export_site(str(site_data), str(out))
+    assert not stale.exists() and (out / "keep.txt").exists()
+    assert (out / group_path("tk-5")).exists()
+
+
 def test_page_weight_on_real_export():
     out = Path("site_data")
-    if not out.exists():
+    if not (out / "atlas.json").exists():
         pytest.skip("no real export")
     assert (out / "narrators.json").stat().st_size <= 3_000_000
     assert max(p.stat().st_size for p in out.glob("groups/*/*.json")) <= 200_000
+    assert max(p.stat().st_size for p in out.glob("search/**/*.json")) <= 600_000
+    jsonschema.validate(json.loads((out / "atlas.json").read_text(encoding="utf-8")),
+                        _schema("atlas"))

@@ -1,0 +1,171 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "isnad-chrono site atlas (spec §3)",
+  "type": "object",
+  "required": [
+    "cl_hist",
+    "drift",
+    "boards"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "cl_hist": {
+      "type": "object",
+      "required": [
+        "all"
+      ],
+      "additionalProperties": {
+        "type": "array",
+        "items": {
+          "type": "array",
+          "minItems": 2,
+          "maxItems": 2,
+          "prefixItems": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "integer"
+            }
+          ]
+        }
+      }
+    },
+    "drift": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "depth",
+          "n_transmissions",
+          "n_edits",
+          "rate",
+          "n_edits_nonleaf",
+          "rate_nonleaf"
+        ],
+        "properties": {
+          "depth": {
+            "type": "integer"
+          },
+          "n_transmissions": {
+            "type": "integer"
+          },
+          "n_edits": {
+            "type": "integer"
+          },
+          "rate": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "n_edits_nonleaf": {
+            "type": "integer"
+          },
+          "rate_nonleaf": {
+            "type": [
+              "number",
+              "null"
+            ]
+          }
+        }
+      }
+    },
+    "boards": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "top_cls",
+        "earliest",
+        "conflicts",
+        "top_editors"
+      ],
+      "properties": {
+        "top_cls": {
+          "type": "array",
+          "maxItems": 50,
+          "items": {
+            "type": "array",
+            "minItems": 2,
+            "maxItems": 2,
+            "prefixItems": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "integer"
+              }
+            ]
+          }
+        },
+        "earliest": {
+          "type": "array",
+          "maxItems": 50,
+          "items": {
+            "type": "array",
+            "minItems": 4,
+            "maxItems": 4,
+            "prefixItems": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "integer"
+              },
+              {
+                "type": "integer"
+              },
+              {
+                "type": "integer"
+              }
+            ]
+          }
+        },
+        "conflicts": {
+          "type": "array",
+          "maxItems": 50,
+          "items": {
+            "type": "array",
+            "minItems": 3,
+            "maxItems": 3,
+            "prefixItems": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "integer"
+              },
+              {
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              }
+            ]
+          }
+        },
+        "top_editors": {
+          "type": "array",
+          "maxItems": 50,
+          "items": {
+            "type": "array",
+            "minItems": 3,
+            "maxItems": 3,
+            "prefixItems": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "integer"
+              },
+              {
+                "type": "integer"
+              }
+            ]
+          }
+        }
+      }
+    }
+  }
+}

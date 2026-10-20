@@ -9,7 +9,9 @@ import datetime
 import gzip
 import json
 import logging
+import math
 import re
+import shutil
 import zlib
 from collections import Counter
 from dataclasses import dataclass, field
@@ -22,7 +24,7 @@ from isnad import export_hf
 from isnad.constants import K_CL
 from isnad.edits import RATED, STATUSES
 from isnad.parse_hadith import parse_hadith
-from isnad.tree import clean_chain
+from isnad.dating import clean_chain_rows
 
 log = logging.getLogger(__name__)
 
@@ -77,6 +79,16 @@ NARRATOR_COLS = ["id", "name", "kunya", "gen", "dy", "dk", "by", "bk", "dlo", "d
 
 def _int(v):
     return None if v is None or pd.isna(v) else int(v)
+
+
+def _floor(v):
+    """Lower year bound, rounded outward (floor, also for negatives)."""
+    return None if v is None or pd.isna(v) else math.floor(float(v))
+
+
+def _ceil(v):
+    """Upper year bound, rounded outward (ceil)."""
+    return None if v is None or pd.isna(v) else math.ceil(float(v))
 
 
 def _str(v):
@@ -162,10 +174,10 @@ def narrators_table(d: Path) -> list[dict]:
             "dk": _str(r["death_kind"]) if r is not None else None,
             "by": _int(r["birth_year"]) if r is not None else None,
             "bk": _str(r["birth_kind"]) if r is not None else None,
-            "dlo": _int(t["death_lo"]) if t is not None else None,
-            "dhi": _int(t["death_hi"]) if t is not None else None,
-            "blo": _int(t["birth_lo"]) if t is not None else None,
-            "bhi": _int(t["birth_hi"]) if t is not None else None,
+            "dlo": _floor(t["death_lo"]) if t is not None else None,
+            "dhi": _ceil(t["death_hi"]) if t is not None else None,
+            "blo": _floor(t["birth_lo"]) if t is not None else None,
+            "bhi": _ceil(t["birth_hi"]) if t is not None else None,
             "method": _str(t["method"]) if t is not None else None,
             "support": _int(t["support"]) if t is not None else None,
             "n_chains": int(n), "placeholder": ph})
@@ -227,8 +239,11 @@ def _gid_key(g: str):
     return (pre, int(n) if n.isdigit() else 0, str(g))
 
 
+RATE_DECIMALS = 4
+
+
 def _rate(v):
-    return None if v is None or pd.isna(v) else round(float(v), 3)
+    return None if v is None or pd.isna(v) else round(float(v), RATE_DECIMALS)
 
 
 def _bool(v):
@@ -285,41 +300,24 @@ class SiteContext:
         self._load_chains()
 
     def _load_chains(self):
-        """hadith_id -> [(cleaned chain, {rawi_id: term})] with the same filtering as
-        ``tree.load_chains`` + ``tree.clean_chains``; plus global teacher/student counts."""
+        """hadith_id -> [(cleaned chain, terms aligned with it)] from ``dating.clean_chain_rows``
+        (same cleaning as the tree stage); plus global teacher/student counts."""
         c = pd.read_parquet(self.d / "chains.parquet",
                             columns=["hadith_id", "chain_no", "position", "rawi_id", "term",
                                      "unjoined"])
         self.chain_rawi = sorted({int(r) for r in c.rawi_id.unique()})
-        bad = set(zip(c.hadith_id[c.unjoined], c.chain_no[c.unjoined]))
-        c = c.sort_values(["hadith_id", "chain_no", "position"])
+        c = clean_chain_rows(c)
         self.hadith_chains: dict[int, list] = {}
         self.teachers: dict[int, Counter] = {}
         self.students: dict[int, Counter] = {}
-        cur, ids, terms = None, [], []
-
-        def flush():
-            if cur is None or cur in bad:
-                return
-            ch, truncated = clean_chain(ids)
-            if not ch or (truncated and len(ch) < 2):
-                return
-            term_of: dict[int, str | None] = {}
-            for r, t in zip(ids, terms):
-                term_of.setdefault(int(r), t)  # first row of the narrator (consecutive dups)
-            self.hadith_chains.setdefault(int(cur[0]), []).append((ch, term_of))
+        per = c.groupby(["hadith_id", "chain_no"], sort=True)[["rawi_id", "term"]].agg(list)
+        for (h, _), ids, terms in zip(per.index, per.rawi_id, per.term):
+            ch = tuple(int(r) for r in ids)
+            terms = [None if t is None or pd.isna(t) else str(t) for t in terms]
+            self.hadith_chains.setdefault(int(h), []).append((ch, terms))
             for a, b in zip(ch, ch[1:]):
                 self.students.setdefault(a, Counter())[b] += 1
                 self.teachers.setdefault(b, Counter())[a] += 1
-
-        for h, n, r, t in zip(c.hadith_id, c.chain_no, c.rawi_id, c.term):
-            key = (h, n)
-            if key != cur:
-                flush()
-                cur, ids, terms = key, [], []
-            ids.append(int(r))
-            terms.append(None if t is None or pd.isna(t) else str(t))
-        flush()
 
     @cached_property
     def narrators(self) -> list[dict]:
@@ -337,7 +335,7 @@ class SiteContext:
         for g, rep in self.reports.items():
             for cid, lo, hi in zip(rep.cl_k2_id, rep.cl_k2_date_lo, rep.cl_k2_date_hi):
                 if pd.notna(cid):
-                    out.setdefault(int(cid), {}).setdefault(g, [g, _int(lo), _int(hi)])
+                    out.setdefault(int(cid), {}).setdefault(g, [g, _floor(lo), _ceil(hi)])
         return {r: sorted(v.values(), key=lambda x: _gid_key(x[0])) for r, v in out.items()}
 
     def group_chains(self, group_id: str) -> list:
@@ -361,22 +359,25 @@ class SiteContext:
 
 
 def _cl_obj(row, k: int) -> dict:
-    return {"id": int(row[f"cl_k{k}_id"]), "lo": _int(row[f"cl_k{k}_date_lo"]),
-            "hi": _int(row[f"cl_k{k}_date_hi"]), "method": _str(row[f"cl_k{k}_date_method"]),
+    return {"id": int(row[f"cl_k{k}_id"]), "lo": _floor(row[f"cl_k{k}_date_lo"]),
+            "hi": _ceil(row[f"cl_k{k}_date_hi"]), "method": _str(row[f"cl_k{k}_date_method"]),
             "all_chains": _bool(row[f"cl_k{k}_all_chains"])}
 
 
 def group_json(group_id: str, ctx: SiteContext) -> dict:
     """The spec §3 group object. ``nodes`` / ``cl`` come from tree_nodes / report_dates, the
-    chains and terms from the same cleaned chains the tree stage merged."""
+    chains and terms from the same cleaned chains the tree stage merged. ``terms["a-b"]`` is the
+    first non-null teacher-row term across the group's chains containing the pair a -> b.
+    ``edits.by_node`` only names introducers present in ``nodes``; an introducer found only
+    through carrier hadiths outside the group's occurrences goes to ``edits.by_node_external``."""
     g = str(group_id)
     chs = ctx.group_chains(g)
     terms: dict[str, str] = {}
-    for ch, term_of in chs:
-        for a, b in zip(ch, ch[1:]):
+    for ch, ts in chs:
+        for a, b, t in zip(ch, ch[1:], ts):
             key = f"{a}-{b}"
-            if key not in terms and term_of.get(a) is not None:
-                terms[key] = term_of[a]
+            if key not in terms and t is not None:
+                terms[key] = t
     nd = ctx.nodes.get(g)
     nodes = [] if nd is None else [
         {"id": int(r.rawi_id), "root": int(r.root_id), "depth": int(r.depth),
@@ -392,13 +393,20 @@ def group_json(group_id: str, ctx: SiteContext) -> dict:
     ed = ctx.edits.get(g)
     edits = {s: 0 for s in EDIT_STATUSES}
     by_node: dict[str, list] = {}
+    external: list[dict] = []
+    node_ids = {n["id"] for n in nodes}
     if ed is not None:
         edits.update({str(s): int(n) for s, n in ed.status.value_counts().items()})
         rated = ed[ed.status.isin(RATED) & ed.introduced_by_rawi_id.notna()].sort_values("seg_no")
         for r in rated.itertuples(index=False):
-            by_node.setdefault(str(int(r.introduced_by_rawi_id)), []).append(
-                {"seg": int(r.seg_no), "type": str(r.edit_type), "status": str(r.status)})
+            rid = int(r.introduced_by_rawi_id)
+            e = {"seg": int(r.seg_no), "type": str(r.edit_type), "status": str(r.status)}
+            if rid in node_ids:
+                by_node.setdefault(str(rid), []).append(e)
+            else:
+                external.append({"id": rid, **e})
     edits["by_node"] = by_node
+    edits["by_node_external"] = external
     rep = ctx.reports.get(g)
     all_chained = None
     if rep is not None and len(rep):
@@ -433,7 +441,7 @@ def atlas_table(ctx: SiteContext) -> dict:
         row = ctx.chosen_cl(g).get(2)
         if row is None or _str(row["cl_k2_date_method"]) == "prior_only":
             continue
-        lo, hi = _int(row["cl_k2_date_lo"]), _int(row["cl_k2_date_hi"])
+        lo, hi = _floor(row["cl_k2_date_lo"]), _ceil(row["cl_k2_date_hi"])
         if lo is None or hi is None:
             continue
         b = ((lo + hi) // 2) // 10 * 10
@@ -447,22 +455,10 @@ def atlas_table(ctx: SiteContext) -> dict:
 
     top_cls = Counter({r: len(v) for r, v in ctx.cl_groups.items()})
     narr = {r["id"]: r for r in ctx.narrators}
-    conflicts = []
-    rawi = pd.read_parquet(ctx.d / "rawi.parquet", columns=["rawi_id", "death_year", "death_kind"])
-    dates = pd.read_parquet(ctx.d / "rawi_dates_inferred.parquet",
-                            columns=["rawi_id", "death_lo", "death_hi"]).drop_duplicates("rawi_id")
-    iv = {int(r): (_int(lo), _int(hi)) for r, lo, hi in zip(dates.rawi_id, dates.death_lo,
-                                                            dates.death_hi)}
-    for rid, dy, dk in zip(rawi.rawi_id, rawi.death_year, rawi.death_kind):
-        lo, hi = iv.get(int(rid), (None, None))
-        dy = _int(dy)
-        if _str(dk) != "exact" or dy is None or lo is None or hi is None:
-            continue
-        dist = lo - dy if dy < lo else dy - hi if dy > hi else 0
-        if dist > 0:
-            conflicts.append((dist, int(rid), dy, lo, hi))
-    conflicts = [[r, dy, lo, hi] for _, r, dy, lo, hi in
-                 sorted(set(conflicts), key=lambda x: (-x[0], x[1]))[:BOARD_N]]
+    rawi = pd.read_parquet(ctx.d / "rawi.parquet", columns=["rawi_id", "death_year"])
+    dy = {int(r): _int(y) for r, y in zip(rawi.rawi_id, rawi.death_year)}
+    n_drop = Counter({r: len(v) for r, v in ctx.dropped.items()})
+    conflicts = [[r, n, dy.get(r)] for r, n in _top(n_drop, BOARD_N)]
 
     n_att: Counter = Counter()
     for ed in ctx.edits.values():
@@ -478,8 +474,26 @@ def atlas_table(ctx: SiteContext) -> dict:
                        "conflicts": conflicts, "top_editors": top_editors}}
 
 
+SITE_SUBDIRS = ("groups", "narrator", "search")
+
+
+def guard_site_out(out: str | Path, data_dir: str | Path) -> Path:
+    """Refuse an ``out`` whose subfolders we delete if it is (or contains) the data dir, the repo
+    root or the cwd (mirrors ``export_hf.guard_out``)."""
+    o = Path(out).resolve()
+    for name, q in [("data dir", Path(data_dir)), ("repo root", export_hf.REPO_ROOT),
+                    ("cwd", Path.cwd())]:
+        q = q.resolve()
+        if q == o or q.is_relative_to(o):
+            raise ValueError(f"refusing --out {out}: it is or contains the {name} {q}")
+    return o
+
+
 def run_export_site(data_dir: str, out: str, checks_path: str | None = None) -> dict:
-    d, o = Path(data_dir), Path(out)
+    d, o = Path(data_dir), guard_site_out(out, data_dir)
+    for sub in SITE_SUBDIRS:  # no stale group/narrator/search files survive a re-export
+        if (o / sub).is_dir():
+            shutil.rmtree(o / sub)
     checks = {}
     if checks_path and Path(checks_path).exists():
         checks = json.loads(Path(checks_path).read_text(encoding="utf-8"))
