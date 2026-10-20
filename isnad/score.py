@@ -83,13 +83,16 @@ def date_conflict(death_year, narrative_years) -> bool:
 
 
 def adjusted_diff(death_year, narrative_years) -> float:
-    """Min |death - y| over narrative years, allowing a century omitted in the text (y < 100)."""
+    """Min |death - y'| over narrative years, where y' = y + 100k (k in 0..15) models an omitted
+    century/millennium. A shifted year may not postdate the death by more than 5 years, so
+    94 vs 12 (-> 112) stays a conflict."""
     best = math.inf
     for y in narrative_years:
-        d = abs(death_year - y)
-        if y < 100:
-            d = min(d, abs((death_year % 100) - y), (death_year - y) % 100)
-        best = min(best, d)
+        for k in range(16):
+            yk = y + 100 * k
+            if k and yk > death_year + 5:
+                break
+            best = min(best, abs(death_year - yk))
     return best
 
 

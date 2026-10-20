@@ -181,3 +181,5 @@ def test_date_conflict_century_less():
     assert date_conflict(106, [186]) is True
     assert date_conflict(117, [117, 118]) is False
     assert date_conflict(94, [12]) is True
+    assert date_conflict(1230, [230]) is False
+    assert date_conflict(1230, [231]) is False
