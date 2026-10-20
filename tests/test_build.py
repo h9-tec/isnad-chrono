@@ -1,3 +1,4 @@
+import gzip
 import shutil
 from pathlib import Path
 
@@ -74,3 +75,18 @@ def test_count_parsed_and_built(tmp_path):
     build.build_rawi(root, out / "rawi.parquet")
     rawi = pd.read_parquet(out / "rawi.parquet")
     assert "count" in rawi.columns and int(rawi.iloc[0]["count"]) == 197
+
+
+def test_build_reads_gz_and_plain(tmp_path):
+    root = tmp_path / "raw" / "html"
+    (root / "hadith").mkdir(parents=True)
+    shutil.copy(FIX / "hadith_muslim_11563.html", root / "hadith" / "11563.html")
+    page = (FIX / "hadith_muslim_11558_nochain.html").read_text(encoding="utf-8")
+    with gzip.open(root / "hadith" / "11558.html.gz", "wt", encoding="utf-8") as f:
+        f.write(page)
+    # present in both forms: counted once
+    shutil.copy(FIX / "hadith_muslim_11563.html", root / "hadith" / "11563.html")
+    with gzip.open(root / "hadith" / "11563.html.gz", "wt", encoding="utf-8") as f:
+        f.write((FIX / "hadith_muslim_11563.html").read_text(encoding="utf-8"))
+    out = tmp_path / "data"
+    assert build.build_hadith(root, out / "h.parquet", out / "e.parquet") == (2, 6)

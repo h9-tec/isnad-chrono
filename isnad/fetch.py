@@ -1,5 +1,6 @@
 """Fetch queue, enumeration, and fetchers. The only module that touches the network."""
 
+import gzip
 import re
 import sqlite3
 import time
@@ -504,11 +505,33 @@ class FetchStats:
     unmatched: int = 0  # results whose sourceURL matched no requested/queued URL (discarded)
 
 
-def _persist(queue: Queue, root: Path, url: str, status, html) -> None:
+def _write_page(path: Path, html: str, compress: bool) -> Path:
+    """Write a page (gzip level 6 appends .gz) via a temp file so readers never see a partial."""
+    if compress:
+        path = path.with_name(path.name + ".gz")
+    tmp = path.with_name(path.name + ".tmp")
+    if compress:
+        with gzip.open(tmp, "wt", encoding="utf-8", compresslevel=6) as f:
+            f.write(html)
+    else:
+        tmp.write_text(html, encoding="utf-8")
+    tmp.replace(path)
+    return path
+
+
+def _cached_page(root: Path, id) -> Path | None:
+    for suffix in (".html.gz", ".html"):
+        p = root / f"{id}{suffix}"
+        if p.exists():
+            return p
+    return None
+
+
+def _persist(queue: Queue, root: Path, url: str, status, html, compress: bool = True) -> None:
     path = root / f"{queue.info(url)[1]}.html"
     if status == 200:
         if _PAGE_RE.search(html or ""):
-            path.write_text(html, encoding="utf-8")
+            path = _write_page(path, html, compress)
             queue.mark(url, "ok", path=path, http_status=status)
         else:  # empty body / challenge page: never cache it as ok
             queue.mark(url, "error", http_status=status)
@@ -522,15 +545,15 @@ def _persist(queue: Queue, root: Path, url: str, status, html) -> None:
 
 def run_fetch(queue: Queue, fetcher, kind: str, book=None, limit=None,
               cache_root="data/raw/html", include_passages=False, log: Callable = print,
-              shard: tuple[int, int] | None = None) -> FetchStats:
+              shard: tuple[int, int] | None = None, compress: bool = True) -> FetchStats:
     root = Path(cache_root) / kind
     root.mkdir(parents=True, exist_ok=True)
     stats = FetchStats()
     todo = []
     for url in queue.pending(kind=kind, book=book, limit=limit, include_passages=include_passages,
                              shard=shard):
-        path = root / f"{queue.info(url)[1]}.html"
-        if path.exists():
+        path = _cached_page(root, queue.info(url)[1])
+        if path is not None:
             queue.mark(url, "ok", path=path)
         else:
             todo.append(url)
@@ -545,7 +568,7 @@ def run_fetch(queue: Queue, fetcher, kind: str, book=None, limit=None,
                 if url not in pending:
                     stats.unmatched += 1
                     continue
-                _persist(queue, root, url, status, html)
+                _persist(queue, root, url, status, html, compress)
             for url in requested:
                 if url in pending and url not in chunk:
                     stats.missing += 1
@@ -558,7 +581,8 @@ def run_fetch(queue: Queue, fetcher, kind: str, book=None, limit=None,
 
 
 def recover_job(queue: Queue, fetcher: "FirecrawlFetcher", job_id: str, kind: str | None = None,
-                cache_root="data/raw/html", log: Callable = print) -> FetchStats:
+                cache_root="data/raw/html", log: Callable = print,
+                compress: bool = True) -> FetchStats:
     """Persist the results of an already-paid Firecrawl job through the normal path.
 
     URLs already `ok` are left alone; results for URLs not in the queue are discarded and counted.
@@ -578,7 +602,7 @@ def recover_job(queue: Queue, fetcher: "FirecrawlFetcher", job_id: str, kind: st
             continue
         if queue.status(url) == "ok":
             continue
-        _persist(queue, root, url, status, html)
+        _persist(queue, root, url, status, html, compress)
         persisted += 1
     if row is None:
         queue.record_job(job_id, kind, [], status="recovered")

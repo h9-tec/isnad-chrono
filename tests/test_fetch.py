@@ -1,3 +1,4 @@
+import gzip
 import json
 import time
 
@@ -203,7 +204,7 @@ def test_batch_partial_result(httpx_mock, tmp_path):
     with httpx.Client() as c:
         run_fetch(q, FirecrawlFetcher("K", c, sleep=lambda s: None), "rawi", cache_root=tmp_path / "html")
     assert q.counts() == {"ok": 1, "404": 1, "pending": 1}
-    assert (tmp_path / "html" / "rawi" / "1.html").read_text() == GOOD
+    assert gzip.decompress((tmp_path / "html" / "rawi" / "1.html.gz").read_bytes()).decode() == GOOD
     assert not (tmp_path / "html" / "rawi" / "2.html").exists()
     assert q.pending() == [urls[2]]
 
@@ -281,7 +282,7 @@ def test_batch2_failure_keeps_batch1(httpx_mock, tmp_path):
     with httpx.Client() as c, pytest.raises(httpx.HTTPStatusError):
         run_fetch(q, fc(c), "rawi", cache_root=tmp_path / "html")
     assert q.counts() == {"ok": 100, "pending": 50}
-    assert len(list((tmp_path / "html" / "rawi").glob("*.html"))) == 100
+    assert len(list((tmp_path / "html" / "rawi").glob("*.html.gz"))) == 100
 
 
 def test_failed_job_marks_nothing(httpx_mock, tmp_path):
@@ -323,7 +324,7 @@ def test_200_without_page_data_is_error(httpx_mock, tmp_path):
     with httpx.Client() as c:
         run_fetch(q, fc(c), "rawi", cache_root=tmp_path / "html")
     assert q.counts() == {"error": 2}
-    assert not list((tmp_path / "html" / "rawi").glob("*.html"))
+    assert not list((tmp_path / "html" / "rawi").glob("*"))
 
 
 def test_transient_status_retries_then_errors_then_reset(httpx_mock, tmp_path):
@@ -517,7 +518,7 @@ def test_recover_job_persists_results(httpx_mock, tmp_path, capsys):
         st = fetch.recover_job(q, fc(c), "j9", cache_root=tmp_path / "html")
     assert st.unmatched == 1
     assert q.counts() == {"ok": 2, "404": 1}
-    assert (tmp_path / "html" / "rawi" / "1.html").read_text() == GOOD
+    assert gzip.decompress((tmp_path / "html" / "rawi" / "1.html.gz").read_bytes()).decode() == GOOD
     assert not (tmp_path / "html" / "rawi" / "3.html").exists()  # already ok: untouched
     assert q.job("j9")["status"] == "recovered"
 
@@ -676,3 +677,34 @@ def test_pending_shards_are_disjoint_and_complete(tmp_path):
     assert len(set().union(*map(set, shards))) == len(urls)
     with pytest.raises(ValueError):
         q.pending(shard=(3, 3))
+
+
+class Canned:
+    def __init__(self, html):
+        self.html = html
+
+    def iter_fetch(self, urls):
+        yield urls, {u: (200, self.html) for u in urls}
+
+
+def test_run_fetch_writes_gzip_and_skips_cached_gz(tmp_path):
+    q, urls = mkq(tmp_path, 2)
+    root = tmp_path / "html" / "rawi"
+    root.mkdir(parents=True)
+    with gzip.open(root / "2.html.gz", "wt", encoding="utf-8") as f:
+        f.write("cached")
+    run_fetch(q, Canned(GOOD), "rawi", cache_root=tmp_path / "html")
+    assert q.counts() == {"ok": 2}
+    assert not (root / "1.html").exists()
+    with gzip.open(root / "1.html.gz", "rt", encoding="utf-8") as f:
+        assert f.read() == GOOD
+    with gzip.open(root / "2.html.gz", "rt", encoding="utf-8") as f:
+        assert f.read() == "cached"  # not re-fetched
+    assert q.info(urls[0]) is not None
+    run_fetch(q, Canned(GOOD), "rawi", cache_root=tmp_path / "html")  # idempotent
+
+
+def test_run_fetch_no_compress_writes_plain(tmp_path):
+    q, _ = mkq(tmp_path, 1)
+    run_fetch(q, Canned(GOOD), "rawi", cache_root=tmp_path / "html", compress=False)
+    assert (tmp_path / "html" / "rawi" / "1.html").read_text(encoding="utf-8") == GOOD

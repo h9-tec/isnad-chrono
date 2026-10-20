@@ -2,6 +2,7 @@
 
 import csv
 import dataclasses
+import gzip
 import json
 from pathlib import Path
 
@@ -40,7 +41,19 @@ def _reset(errors: Path) -> None:
 
 def _pages(cache_root, kind: str):
     d = Path(cache_root) / kind
-    return sorted(d.glob("*.html")) if d.is_dir() else []
+    if not d.is_dir():
+        return []
+    paths = {p.name.removesuffix(".html"): p for p in d.glob("*.html")}
+    paths.update({p.name.removesuffix(".html.gz"): p for p in d.glob("*.html.gz")})  # .gz wins
+    return [paths[k] for k in sorted(paths)]
+
+
+def read_page(path) -> str:
+    path = Path(path)
+    if path.suffix == ".gz":
+        with gzip.open(path, "rt", encoding="utf-8") as f:
+            return f.read()
+    return path.read_text(encoding="utf-8")
 
 
 def _write(rows: list[dict], columns: list[str], path: Path) -> None:
@@ -57,7 +70,7 @@ def build_rawi(cache_root, out="data/rawi.parquet", reset: bool = True) -> int:
     n_err = 0
     for p in _pages(cache_root, "rawi"):
         try:
-            r = parse_rawi(p.read_text(encoding="utf-8"))
+            r = parse_rawi(read_page(p))
         except _PARSE_ERRORS as e:
             out.parent.mkdir(parents=True, exist_ok=True)
             _log_error(errors, p, e)
@@ -92,7 +105,7 @@ def build_hadith(cache_root, out_h="data/hadith.parquet", out_e="data/edges.parq
     n_err = 0
     for p in _pages(cache_root, "hadith"):
         try:
-            rec = parse_hadith(p.read_text(encoding="utf-8"))
+            rec = parse_hadith(read_page(p))
             ed = edges(rec)
         except _PARSE_ERRORS as e:
             out_h.parent.mkdir(parents=True, exist_ok=True)
