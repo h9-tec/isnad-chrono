@@ -44,6 +44,11 @@ def main(argv=None) -> None:
     cp.add_argument("--cache-root", default="data/raw/html")
     cp.add_argument("--out", default="data/chains.parquet")
     cp.add_argument("--limit", type=int, help="only the first N cached hadith pages")
+    grp = top.add_parser("groups", help="takhrij groups, variant segments and shawahid")
+    grp.add_argument("--cache-root", default="data/raw/html")
+    grp.add_argument("--out-dir", default="data")
+    grp.add_argument("--rawi", default="data/rawi.parquet")
+    grp.add_argument("--limit", type=int, help="only the first N cached hadith pages")
     sp = top.add_parser("score")
     sp.add_argument("--edges", default="data/edges.parquet")
     sp.add_argument("--rawi", default="data/rawi.parquet")
@@ -106,6 +111,11 @@ def main(argv=None) -> None:
     if args.cmd == "chains":
         from isnad import chains
         chains.run_chains(args.cache_root, args.out, limit=args.limit)
+        return
+
+    if args.cmd == "groups":
+        from isnad import groups
+        groups.run_groups(args.cache_root, args.out_dir, limit=args.limit, rawi_path=args.rawi)
         return
 
     if args.cmd == "gold":
