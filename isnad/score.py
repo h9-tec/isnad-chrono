@@ -4,7 +4,7 @@ import math
 import pandas as pd
 
 from isnad.constants import (
-    A0, AMBIGUOUS_EXACT, AMBIGUOUS_PREFIXES, CONFLICT_YEARS, EXPLICIT_EXACT, EXPLICIT_PREFIXES,
+    A0, AMBIGUOUS_EXACT, PASSIVE_EXACT, PASSIVE_PREFIXES, AMBIGUOUS_PREFIXES, CONFLICT_YEARS, EXPLICIT_EXACT, EXPLICIT_PREFIXES,
     GAP_THRESHOLD, MU_AGE, SD_AGE, SUSPECT_THRESHOLD,
 )
 from isnad.dates import Year, _norm
@@ -23,6 +23,8 @@ def _strip(term) -> str | None:
 _EXPLICIT_EXACT = {_strip(t) for t in EXPLICIT_EXACT}
 _AMBIGUOUS_EXACT = {_strip(t) for t in AMBIGUOUS_EXACT}
 _EXPLICIT_PREFIXES = tuple(_strip(t) for t in EXPLICIT_PREFIXES)
+_PASSIVE_EXACT = {_strip(t) for t in PASSIVE_EXACT}
+_PASSIVE_PREFIXES = tuple(_strip(t) for t in PASSIVE_PREFIXES)
 _AMBIGUOUS_PREFIXES = tuple(_strip(t) for t in AMBIGUOUS_PREFIXES)
 
 
@@ -31,6 +33,10 @@ def classify_term(term) -> str:
     t = _strip(term)
     if t is None:
         return "ambiguous"
+    toks = t.split()
+    if t in _PASSIVE_EXACT or t.startswith(_PASSIVE_PREFIXES) or (
+            len(toks) > 1 and toks[1] == "عن" and t.startswith(_EXPLICIT_PREFIXES)):
+        return "ambiguous"  # passive formulae: the narrator did not hear directly
     if t in _EXPLICIT_EXACT or t.startswith(_EXPLICIT_PREFIXES):
         return "explicit"
     if t in _AMBIGUOUS_EXACT or t.startswith(_AMBIGUOUS_PREFIXES):
@@ -73,7 +79,18 @@ def date_conflict(death_year, narrative_years) -> bool:
         return False
     if narrative_years is None or len(narrative_years) == 0:
         return False
-    return min(abs(death_year - y) for y in narrative_years) >= CONFLICT_YEARS
+    return adjusted_diff(death_year, narrative_years) >= CONFLICT_YEARS
+
+
+def adjusted_diff(death_year, narrative_years) -> float:
+    """Min |death - y| over narrative years, allowing a century omitted in the text (y < 100)."""
+    best = math.inf
+    for y in narrative_years:
+        d = abs(death_year - y)
+        if y < 100:
+            d = min(d, abs((death_year % 100) - y), (death_year - y) % 100)
+        best = min(best, d)
+    return best
 
 
 def _get(student, key, default):

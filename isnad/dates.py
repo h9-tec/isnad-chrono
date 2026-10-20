@@ -60,6 +60,8 @@ for _w, _n in (("ثلاث", 3), ("اربع", 4), ("خمس", 5), ("ست", 6), ("�
     for _h in _HUNDRED:
         _FUSED[_w + _h] = _n * 100
 
+_THOUSAND = {"الف": 1000, "الفين": 2000}
+
 _PUNCT = ".,;:،؛()[]«»\"'"
 
 
@@ -74,6 +76,8 @@ def _word_value(tok: str) -> int | None:
             continue
         if t in _FUSED:
             return _FUSED[t]
+        if t in _THOUSAND:
+            return _THOUSAND[t]
         if t in _TWO_HUNDRED:
             return 200
         if t in _HUNDRED:
@@ -154,6 +158,7 @@ def parse_year(text: str | None, num: int | None = None) -> Year:
     return Year(None, None, "none")
 
 
+MAX_NARRATIVE_YEAR = 1500
 _TRIGGER = re.compile(r"(?:مات|توفي|وفاته|هلك)[^.]{0,40}?" + _bound("سنه"))
 
 
@@ -168,7 +173,8 @@ def narrative_years(text: str) -> list[int]:
         if _AGE.search(m.group()) or (len(gap) > 1 and _word_value(_clean(gap[-2])) is not None):
             continue  # age phrase ("وله ست وثلاثون سنة"), not a death year
         toks = []
-        for raw in t[m.end():].split():
+        rest = t[m.end():].split()
+        for raw in rest:
             tok = _clean(raw)
             if tok.isdigit() or _word_value(tok) is not None:
                 toks.append(tok)
@@ -177,6 +183,9 @@ def narrative_years(text: str) -> list[int]:
             else:
                 break
         v = _value(" ".join(toks)) if toks else None
-        if v is not None and 1 <= v <= 400:
+        after = rest[len(toks)] if len(toks) < len(rest) else ""
+        if _clean(after) in ("م", "ميلادي", "ميلاديه") or _clean(after).startswith("ميلادي"):
+            continue  # Gregorian (CE) year
+        if v is not None and 1 <= v <= MAX_NARRATIVE_YEAR:
             out.append(v)
     return out

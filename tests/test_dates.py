@@ -50,7 +50,7 @@ def test_number_words(txt, val):
 
 
 def test_narrative_filters_range():
-    assert narrative_years("مات سنة 900 ثم مات سنة 5") == [5]
+    assert narrative_years("مات سنة 1600 ثم مات سنة 5") == [5]
 
 
 def test_num_beats_era():
@@ -65,3 +65,12 @@ def test_stray_number_word_is_not_a_year():
 
 def test_narrative_ignores_age():
     assert narrative_years("مات وله ست وثلاثون سنة وثمانية أشهر") == []
+
+
+def test_narrative_years_late_and_ce():
+    assert narrative_years("مات سنة اثنتين وخمسين وثمانمائة") == [852]
+    assert narrative_years("توفي سنة 1250") == [1250]
+    assert narrative_years("توفي سنة 1448م") == []
+    assert narrative_years("توفي سنة 1448 م") == []
+    assert narrative_years("مات سنة ألف") == [1000]
+    assert narrative_years("مات سنة سبعمائة") == [700]

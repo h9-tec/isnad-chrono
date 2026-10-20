@@ -166,7 +166,18 @@ import pytest  # noqa: E402
     ("حدثنا", "explicit"), ("عن", "ambiguous"), (None, "ambiguous"),
     ("أنبأنا", "explicit"), ("قرئ على", "explicit"), ("قال", "ambiguous"),
     ("xyz", "unclassified"),
+    ("حدثت عن", "ambiguous"), ("أخبرنا عن", "ambiguous"), ("نبئت", "ambiguous"),
+    ("حدثنا عن", "ambiguous"), ("سمعت عن", "ambiguous"), ("أُخبرت", "ambiguous"),
+    ("أنبئت", "ambiguous"), ("حدثت أن", "ambiguous"), ("أخبرني", "explicit"),
 ])
 def test_classify_term(term, expected):
     from isnad.score import classify_term
     assert classify_term(term) == expected
+
+
+def test_date_conflict_century_less():
+    assert date_conflict(257, [57]) is False
+    assert date_conflict(186, [86, 6]) is False
+    assert date_conflict(106, [186]) is True
+    assert date_conflict(117, [117, 118]) is False
+    assert date_conflict(94, [12]) is True

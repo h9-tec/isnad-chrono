@@ -64,3 +64,8 @@ AMBIGUOUS_PREFIXES = (
 )
 EXPLICIT_EXACT = {"صريح في السماع", "نا", "ثنا", "انا"}  # نا/ثنا/أنا: scribal abbreviations; exact so نافع is not captured
 AMBIGUOUS_EXACT = {"في حكم العنعنه", "قيل"}  # في حكم العنعنة
+
+# Passive formulae ("it was narrated to me"): the narrator did not hear directly -> ambiguous.
+# Checked before the explicit roots; "<explicit root> عن" is handled in classify_term.
+PASSIVE_EXACT = {"اخبرت", "نبئت", "انبئت"}
+PASSIVE_PREFIXES = ("حدثت عن", "حدثت ان", "اخبرت عن", "اخبرت ان", "نبئت", "انبئت")

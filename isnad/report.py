@@ -2,7 +2,7 @@
 
 import pandas as pd
 
-from isnad.score import date_conflict
+from isnad.score import adjusted_diff, date_conflict
 
 WEAK = {"chronology_gap", "suspect"}
 WEAK_COLS = ["teacher_id", "teacher_abbrev", "teacher_death", "student_id", "student_abbrev",
@@ -61,7 +61,7 @@ def date_errors(rawi) -> pd.DataFrame:
         rows.append({"rawi_id": r.rawi_id, "abbrev": ab, "death_year": r.death_year,
                      "death_kind": r.death_kind,
                      "narrative_years": "|".join(str(int(y)) for y in ny),
-                     "diff": min(abs(r.death_year - y) for y in ny)})
+                     "diff": adjusted_diff(r.death_year, ny)})
     out = pd.DataFrame(rows, columns=cols)
     return out.sort_values("diff", ascending=False, kind="stable").reset_index(drop=True)
 
