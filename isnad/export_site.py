@@ -448,22 +448,23 @@ def atlas_table(ctx: SiteContext) -> dict:
         hist["all"][b] += 1
         for slug in ctx.books.get(g, {}):
             hist.setdefault(slug, Counter())[b] += 1
-        earliest.append([g, int(row["cl_k2_id"]), lo, hi])
+        if int(row["cl_k2_id"]) not in PLACEHOLDER_IDS:  # boards skip placeholders
+            earliest.append([g, int(row["cl_k2_id"]), lo, hi])
     cl_hist = {s: [[int(b), int(n)] for b, n in sorted(c.items())]
                for s, c in sorted(hist.items(), key=lambda kv: (kv[0] != "all", _gid_key(kv[0])))}
     earliest.sort(key=lambda x: (x[3], x[2], _gid_key(x[0])))
 
-    top_cls = Counter({r: len(v) for r, v in ctx.cl_groups.items()})
+    top_cls = Counter({r: len(v) for r, v in ctx.cl_groups.items() if r not in PLACEHOLDER_IDS})
     narr = {r["id"]: r for r in ctx.narrators}
     rawi = pd.read_parquet(ctx.d / "rawi.parquet", columns=["rawi_id", "death_year"])
     dy = {int(r): _int(y) for r, y in zip(rawi.rawi_id, rawi.death_year)}
-    n_drop = Counter({r: len(v) for r, v in ctx.dropped.items()})
+    n_drop = Counter({r: len(v) for r, v in ctx.dropped.items() if r not in PLACEHOLDER_IDS})
     conflicts = [[r, n, dy.get(r)] for r, n in _top(n_drop, BOARD_N)]
 
     n_att: Counter = Counter()
     for ed in ctx.edits.values():
         a = ed[(ed.status == "attributed") & ed.introduced_by_rawi_id.notna()]
-        n_att.update(int(r) for r in a.introduced_by_rawi_id)
+        n_att.update(int(r) for r in a.introduced_by_rawi_id if int(r) not in PLACEHOLDER_IDS)
     top_editors = [[r, n, narr[r]["n_chains"] if r in narr else 0]
                    for r, n in _top(n_att, BOARD_N)]
 

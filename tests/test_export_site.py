@@ -282,12 +282,29 @@ def test_atlas(site_data):
     assert a["drift"][1] == {"depth": 1, "n_transmissions": 3, "n_edits": 1, "rate": 0.3333,
                              "n_edits_nonleaf": 1, "rate_nonleaf": 0.3333}
     assert a["drift"][0]["rate"] is None
-    assert a["boards"]["top_cls"] == [[2, 1]]
-    assert a["boards"]["earliest"] == [["tk-5", 2, 100, 110]]
-    # narrators by dropped dating links touching them: 2 (two links), then 4 and 9; 2 has no dy
-    assert a["boards"]["conflicts"] == [[2, 2, None], [4, 1, None], [9, 1, None]]
+    # the only CL is narrator 2, a placeholder: kept in the histogram, off the boards
+    assert a["boards"]["top_cls"] == [] and a["boards"]["earliest"] == []
+    # dropped links: 2 (placeholder, two links, excluded), then 4 and 9
+    assert a["boards"]["conflicts"] == [[4, 1, None], [9, 1, None]]
     assert a["boards"]["top_editors"] == [[4, 2, 3], [99, 1, 0]]  # attributed, n_chains
     jsonschema.validate(a, _schema("atlas"))
+
+
+def test_boards_exclude_placeholders(site_data):
+    e = pd.read_parquet(site_data / "edits.parquet")
+    extra = e.iloc[[0, 0, 0]].copy()
+    extra["seg_no"] = [10, 11, 12]
+    extra["introduced_by_rawi_id"] = pd.array([1, 1, 1], dtype="Int64")  # would rank first
+    pd.concat([e, extra]).to_parquet(site_data / "edits.parquet")
+    rd = pd.read_parquet(site_data / "report_dates.parquet")
+    rd["cl_k2_id"] = rd.cl_k2_id.where(rd.cl_k2_id.isna(), 4).astype("Int64")  # non-placeholder CL
+    rd.to_parquet(site_data / "report_dates.parquet")
+    b = atlas_table(SiteContext(site_data))["boards"]
+    assert b["top_editors"] == [[4, 2, 3], [99, 1, 0]]
+    assert b["top_cls"] == [[4, 1]] and b["earliest"] == [["tk-5", 4, 100, 110]]
+    assert all(r[0] not in (1, 2) for k in ("top_cls", "conflicts", "top_editors") for r in b[k])
+    g = group_json("tk-5", SiteContext(site_data))
+    assert {1, 2} <= {n["id"] for n in g["nodes"]}  # still tree nodes
 
 
 def test_atlas_skips_prior_only(site_data):
@@ -328,7 +345,7 @@ def test_years_rounded_outward(site_data):
     assert (cl["lo"], cl["hi"]) == (69, 78)
     assert narrator_detail(2, ctx)["cl_groups"] == [["tk-5", 69, 78]]
     a = atlas_table(ctx)
-    assert a["boards"]["earliest"] == [["tk-5", 2, 69, 78]] and a["cl_hist"]["all"] == [[70, 1]]
+    assert narrator_detail(2, ctx)["cl_groups"] == [["tk-5", 69, 78]] and a["cl_hist"]["all"] == [[70, 1]]
     n1 = {r["id"]: r for r in narrators_table(site_data)}[1]
     assert (n1["dlo"], n1["dhi"], n1["blo"], n1["bhi"]) == (-1, 78, -4, 0)
 
