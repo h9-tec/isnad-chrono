@@ -7,3 +7,4 @@ __pycache__/
 figures/
 release/
 release_hf/
+site_data/

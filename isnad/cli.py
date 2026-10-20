@@ -1,6 +1,6 @@
 """CLI: python -m isnad.cli <command> ...
 
-Commands: fetch build chains groups dating tree edits gold score validate report export export-hf
+Commands: fetch build chains groups dating tree edits gold score validate report export export-hf export-site
 """
 
 import argparse
@@ -122,7 +122,17 @@ def main(argv=None) -> None:
     hp.add_argument("--private", action="store_true")
     hp.add_argument("--env-file", default=None,
                     help="file with a HF_TOKEN=... line (default: export_hf.ENV_FILE)")
+    sp = top.add_parser("export-site", help="JSON tables for the static site")
+    sp.add_argument("--data-dir", default="data")
+    sp.add_argument("--out", default="site_data")
+    sp.add_argument("--checks", default="release_hf/checks.json")
     args = ap.parse_args(argv)
+
+    if args.cmd == "export-site":
+        from isnad import export_site
+        for name, n in export_site.run_export_site(args.data_dir, args.out, args.checks).items():
+            print(name, n, "bytes")
+        return
 
     if args.cmd == "export-hf":
         from isnad import export_hf
