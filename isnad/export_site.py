@@ -91,11 +91,18 @@ def _page_title(d: Path, hadith_id: int):
 def _titles(d: Path, occ: pd.DataFrame) -> dict:
     had = pd.read_parquet(Path(d) / "hadith.parquet", columns=["book_slug", "book_title"])
     titles = had.dropna().drop_duplicates("book_slug").set_index("book_slug")["book_title"].to_dict()
-    first = occ.drop_duplicates("book_slug").set_index("book_slug")["hadith_id"]
+    ids = occ.drop_duplicates(["book_slug", "hadith_id"]).groupby("book_slug")["hadith_id"]
     out = {}
-    for slug in sorted(first.index):
-        out[slug] = str(titles[slug]) if slug in titles else (
-            _page_title(d, int(first[slug])) or slug)
+    for slug, hs in sorted(ids):
+        if slug in titles:
+            out[slug] = str(titles[slug])
+            continue
+        out[slug] = slug
+        for h in hs:  # first occurrence whose cached page exists and parses
+            t = _page_title(d, int(h))
+            if t:
+                out[slug] = t
+                break
     return out
 
 
@@ -153,14 +160,8 @@ def narrators_table(d: Path) -> list[dict]:
     return rows
 
 
-def _num(group_id: str):
-    """tk-N -> N; any other id (the 538 tg-N cluster groups) is kept as its full string."""
-    g = str(group_id)
-    return int(g[3:]) if g.startswith("tk-") else g
-
-
 def _sorted(groups) -> list:
-    return sorted(groups, key=lambda g: (isinstance(g, str), g))
+    return sorted(groups)
 
 
 def search_tables(d: Path) -> dict:
@@ -172,7 +173,7 @@ def search_tables(d: Path) -> dict:
     nums: dict[str, dict[str, set]] = {}
     hids: dict[str, dict[str, set]] = {}
     for g, h, s, n in zip(occ["group_id"], occ["hadith_id"], occ["book_slug"], occ["numbering"]):
-        gn = _num(g)
+        gn = str(g)
         hids.setdefault(f"{int(h) % 100:02d}", {}).setdefault(str(int(h)), set()).add(gn)
         if n is None or pd.isna(n):
             continue

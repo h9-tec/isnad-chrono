@@ -107,9 +107,9 @@ def test_run_export_site_writes_core(tmp_data, tmp_path):
             "search/h/11.json"} <= set(m)
     o = tmp_path / "out"
     n = json.loads((o / "search/n/b-2.json").read_text())
-    assert n["numbering"]["6"] == [5, 107]  # duplicated key keeps both, sorted ints
-    assert json.loads((o / "search/n/b-1.json").read_text())["numbering"] == {"7": [6], "8": ["tg-9"]}
-    assert json.loads((o / "search/h/11.json").read_text())["11"] == [5, 107]
+    assert n["numbering"]["6"] == ["tk-107", "tk-5"]  # duplicated key keeps both, sorted ints
+    assert json.loads((o / "search/n/b-1.json").read_text())["numbering"] == {"7": ["tk-6"], "8": ["tg-9"]}
+    assert json.loads((o / "search/h/11.json").read_text())["11"] == ["tk-107", "tk-5"]
     s = json.loads((o / "search.json").read_text())
     assert s["books"]["b-2"] == "صحيح مسلم" and s["aliases"]["muslim"] == "b-2"
     nar = json.loads((o / "narrators.json").read_text())
@@ -121,9 +121,12 @@ def test_run_export_site_writes_core(tmp_data, tmp_path):
 
 def test_title_from_cached_page_and_page_count(tmp_data):
     from unittest import mock
+    occ = pd.read_parquet(tmp_data / "occurrences.parquet")
+    pd.concat([occ, pd.DataFrame({"group_id": ["tk-8"], "hadith_id": [13], "book_slug": ["b-1"],
+                                  "numbering": ["9"]})]).to_parquet(tmp_data / "occurrences.parquet")
     base = tmp_data / "raw/html/hadith"
     base.mkdir(parents=True)
-    with gzip.open(base / "12.html.gz", "wt", encoding="utf-8") as f:
+    with gzip.open(base / "13.html.gz", "wt", encoding="utf-8") as f:  # 12 is not cached
         f.write("<html/>")
     (base / "99.html").write_text("x")
     rec = mock.Mock(book_title="صحيح البخاري")
@@ -132,5 +135,5 @@ def test_title_from_cached_page_and_page_count(tmp_data):
     assert meta["n_hadith_pages_cached"] == 2
     assert {b["slug"]: b["title"] for b in meta["books"]} == {
         "b-1": "صحيح البخاري", "b-2": "صحيح مسلم"}
-    (base / "12.html.gz").unlink()  # unreadable -> slug
+    (base / "13.html.gz").unlink()  # unreadable -> slug
     assert {b["slug"]: b["title"] for b in meta_table(tmp_data)["books"]}["b-1"] == "b-1"
