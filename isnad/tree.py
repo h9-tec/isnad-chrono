@@ -13,6 +13,12 @@ root and analysed on its own.
   more chains, then the smaller rawi_id. Partial common links: every other node with
   ``k_branches >= k``.
 * report date: the common link's ``death_lo/death_hi`` from the inferred narrator dates.
+* k_branches counts distinct pupils (children reaching a terminal), not distinct compilers;
+  ``n_compilers`` is reported alongside; ``cl_kN_all_chains`` gives the strict reading (every
+  chain of the component passes through the common link).
+* a chain that repeats a narrator non-consecutively (e.g. an isnad parsed twice and
+  concatenated) is truncated before the first repeat, so it cannot create a back edge that
+  inflates k_branches; a truncated chain shorter than 2 narrators is dropped.
 
 Real chains can repeat a narrator or disagree on order, so the "tree" is a general directed
 graph: reachability is a fixed point over terminal bitmasks (cycle-safe), depth is BFS distance.
@@ -31,13 +37,21 @@ from isnad.constants import K_CL
 log = logging.getLogger(__name__)
 
 
-def _clean(chain) -> tuple[int, ...]:
+def _clean(chain) -> tuple[tuple[int, ...], bool]:
+    """Collapse consecutive duplicates; truncate before the first non-consecutive repeat.
+
+    Returns (chain, truncated)."""
     out: list[int] = []
+    seen: set[int] = set()
     for r in chain:
         r = int(r)
-        if not out or out[-1] != r:
-            out.append(r)
-    return tuple(out)
+        if out and out[-1] == r:
+            continue
+        if r in seen:
+            return tuple(out), True
+        out.append(r)
+        seen.add(r)
+    return tuple(out), False
 
 
 @dataclass
@@ -45,6 +59,7 @@ class Tree:
     chains: list[tuple[int, ...]]
     children: dict[int, set[int]]
     roots: list[int]
+    n_truncated: int = 0
     _components: dict[int, "Tree"] = field(default_factory=dict, repr=False)
 
     @cached_property
@@ -106,7 +121,13 @@ class Tree:
 
 def merge_tree(chains: list[list[int]]) -> Tree:
     """Union of chains (earliest narrator first, compiler last) into one graph."""
-    cleaned = [c for c in (_clean(ch) for ch in chains) if c]
+    cleaned: list[tuple[int, ...]] = []
+    n_truncated = 0
+    for ch in chains:
+        c, truncated = _clean(ch)
+        n_truncated += truncated
+        if c and not (truncated and len(c) < 2):
+            cleaned.append(c)
     children: dict[int, set[int]] = {}
     roots: list[int] = []
     for ch in cleaned:
@@ -116,7 +137,7 @@ def merge_tree(chains: list[list[int]]) -> Tree:
             children.setdefault(n, set())
         for a, b in zip(ch, ch[1:]):
             children[a].add(b)
-    return Tree(cleaned, children, sorted(roots))
+    return Tree(cleaned, children, sorted(roots), n_truncated)
 
 
 def k_branches(tree: Tree, node: int) -> int:
@@ -169,6 +190,8 @@ def analyse(group_id: str, tree: Tree) -> tuple[list[dict], list[dict]]:
         rep = {"group_id": group_id, "root_id": r}
         for k in K_CL:
             rep[f"cl_k{k}_id"] = cls[k]
+            rep[f"cl_k{k}_all_chains"] = (None if cls[k] is None
+                                          else comp.n_chains_through(cls[k]) == len(comp.chains))
         rep["n_chains"] = len(comp.chains)
         rep["n_compilers"] = len(comp.terminals)
         reports.append(rep)
@@ -176,7 +199,8 @@ def analyse(group_id: str, tree: Tree) -> tuple[list[dict], list[dict]]:
 
 
 _REPORT_COLS = ["group_id", "root_id"] + [
-    c for k in K_CL for c in (f"cl_k{k}_id", f"cl_k{k}_date_lo", f"cl_k{k}_date_hi")
+    c for k in K_CL for c in (f"cl_k{k}_id", f"cl_k{k}_date_lo", f"cl_k{k}_date_hi",
+                              f"cl_k{k}_all_chains")
 ] + ["n_chains", "n_compilers", "complete"]
 
 
@@ -190,6 +214,7 @@ def _attach_dates(rep: pd.DataFrame, groups: pd.DataFrame, dates: pd.DataFrame) 
         rep[f"cl_k{k}_date_hi"] = [float(hi.get(i, float("nan"))) if pd.notna(i) else float("nan")
                                    for i in ids]
         rep[f"cl_k{k}_id"] = ids.astype("Int64")
+        rep[f"cl_k{k}_all_chains"] = pd.array(list(rep[f"cl_k{k}_all_chains"]), dtype="boolean")
     rep["root_id"] = rep["root_id"].astype("Int64")
     complete = dict(zip(groups.group_id, groups.complete)) if "complete" in groups else {}
     rep["complete"] = pd.array([complete.get(g) for g in rep.group_id], dtype="boolean")
@@ -200,7 +225,8 @@ def _attach_dates(rep: pd.DataFrame, groups: pd.DataFrame, dates: pd.DataFrame) 
 
 def _empty_report(group_id: str) -> dict:
     return {"group_id": group_id, "root_id": None,
-            **{f"cl_k{k}_id": None for k in K_CL}, "n_chains": 0, "n_compilers": 0}
+            **{f"cl_k{k}_id": None for k in K_CL},
+            **{f"cl_k{k}_all_chains": None for k in K_CL}, "n_chains": 0, "n_compilers": 0}
 
 
 def report_dates(groups: pd.DataFrame, trees: dict[str, Tree], dates: pd.DataFrame
@@ -258,10 +284,11 @@ def run_tree(chains_path, occurrences_path, groups_path, dates_path, out_dir,
     node_rows: list[dict] = []
     rep_rows: list[dict] = []
     stats = {"groups": 0, "ge2_chains": 0, "k2_cl": 0, "k3_cl": 0, "multi_root": 0,
-             "no_chains": 0}
+             "no_chains": 0, "chains_truncated_repeat": 0}
     for g in groups.group_id:
         stats["groups"] += 1
         t = merge_tree([ch for h in hids.get(g, []) for ch in chains.get(h, [])])
+        stats["chains_truncated_repeat"] += t.n_truncated
         if not t.roots:
             stats["no_chains"] += 1
             rep_rows.append(_empty_report(g))
@@ -287,7 +314,7 @@ def run_tree(chains_path, occurrences_path, groups_path, dates_path, out_dir,
         rows = []
         for g, ids in zip(sh.group_id, sh.hadith_ids):
             for h in ids if ids is not None else []:
-                comps = sorted({_clean(ch)[0] for ch in chains.get(int(h), []) if len(ch)})
+                comps = sorted({_clean(ch)[0][0] for ch in chains.get(int(h), []) if len(ch)})
                 rows += ([(g, int(h), c) for c in comps] or [(g, int(h), None)])
         sc = pd.DataFrame(rows, columns=["group_id", "hadith_id", "companion_rawi_id"])
         sc["companion_rawi_id"] = sc.companion_rawi_id.astype("Int64")

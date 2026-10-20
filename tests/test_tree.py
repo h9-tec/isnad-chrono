@@ -139,3 +139,30 @@ def test_cli_tree(tmp_path, capsys):
     sc = pd.read_parquet(tmp_path / "shawahid_companions.parquet")
     assert sorted(sc.dropna().itertuples(index=False, name=None)) == [("a", 100, 1), ("a", 103, 6)]
     assert sc[sc.hadith_id == 999].companion_rawi_id.isna().all()
+
+
+def test_repeated_narrator_truncates_chain():
+    t = merge_tree([[1, 2, 3, 2, 10]])
+    assert t.chains == [(1, 2, 3)] and t.n_truncated == 1
+    assert common_links(t, 2) == [] and common_links(t, 3) == []
+    t2 = merge_tree([[1, 2, 1, 10]])
+    assert t2.chains == [(1, 2)] and common_links(t2, 2) == []
+    assert k_branches(t, 2) == 1
+
+
+def test_truncated_chain_too_short_dropped():
+    t = merge_tree([[1, 1, 1], [5, 6, 5]])  # first collapses to (1,), kept; second -> (5, 6)
+    assert t.chains == [(1,), (5, 6)] and t.n_truncated == 1
+
+
+def test_cl_all_chains_flag():
+    # tk-52101 shape: chain 4 reaches compiler 10 through 6, bypassing the k3 CL 2
+    trees = {"g": merge_tree([[1, 2, 3, 10], [1, 2, 4, 11], [1, 2, 5, 12], [1, 6, 3, 10]])}
+    groups = pd.DataFrame({"group_id": ["g"], "complete": [True]})
+    dates = pd.DataFrame({"rawi_id": [], "death_lo": [], "death_hi": []})
+    r = report_dates(groups, trees, dates).iloc[0]
+    assert r.cl_k3_id == 2 and not r.cl_k3_all_chains
+    assert r.cl_k2_id == 1 and r.cl_k2_all_chains
+    single = report_dates(pd.DataFrame({"group_id": ["s"], "complete": [True]}),
+                          {"s": merge_tree([[1, 2]])}, dates).iloc[0]
+    assert pd.isna(single.cl_k2_all_chains)
