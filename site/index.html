@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>isnad-chrono · مستكشف الأسانيد</title>
+  <meta name="description" content="شجرة أسانيد الحديث المدمجة، الحلقة المشتركة، وتواريخ الرواة المقدرة.">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header class="site-header">
+    <div class="brand">
+      <a href="index.html" class="logo">isnad-chrono</a>
+      <span class="tagline">مستكشف الأسانيد وتواريخ الرواة <span class="en">· isnad explorer</span></span>
+    </div>
+    <nav class="site-nav">
+      <a href="index.html" aria-current="page">المستكشف</a>
+      <a href="atlas.html">الأطلس</a>
+      <a href="boards.html">اللوائح</a>
+      <a href="method.html">المنهج</a>
+    </nav>
+  </header>
+
+  <section class="search">
+    <form id="search-form" role="search">
+      <label for="q" class="visually-hidden">بحث</label>
+      <input id="q" name="q" type="search" autocomplete="off" spellcheck="false"
+             placeholder="كتاب ورقم، رقم حديث، tk-N، أو اسم راوٍ">
+      <button type="submit">بحث</button>
+    </form>
+    <div class="examples">
+      <span>أمثلة:</span>
+      <a href="?q=bukhari%2010" data-q="bukhari 10" dir="ltr">bukhari 10</a>
+      <a href="?q=%D9%85%D8%B3%D9%84%D9%85%202864" data-q="مسلم 2864">مسلم 2864</a>
+      <a href="?q=tk-12688" data-q="tk-12688" dir="ltr">tk-12688</a>
+      <a href="?q=%D8%B3%D9%81%D9%8A%D8%A7%D9%86%20%D8%A8%D9%86%20%D8%B9%D9%8A%D9%8A%D9%86%D8%A9" data-q="سفيان بن عيينة">سفيان بن عيينة</a>
+    </div>
+    <div id="results" class="results" aria-live="polite"></div>
+  </section>
+
+  <main class="layout">
+    <section class="canvas" aria-label="شجرة الأسانيد">
+      <div class="toolbar">
+        <div class="legend">
+          <span><i class="dot known"></i>معروف</span>
+          <span><i class="dot inferred"></i>مقدر</span>
+          <span><i class="dot prior_only"></i>تقدير أولي</span>
+          <span><i class="dot placeholder"></i>غير مسمى</span>
+          <span><i class="ring-k2"></i>حلقة مشتركة k2</span>
+          <span><i class="ring-k3"></i>k3</span>
+          <span><i class="ring-partial"></i>جزئية</span>
+          <span><i class="pill">n</i>تغييرات اللفظ</span>
+        </div>
+        <div class="zoom" role="group" aria-label="تكبير">
+          <button type="button" data-zoom="out" title="تصغير">−</button>
+          <button type="button" data-zoom="in" title="تكبير">+</button>
+          <button type="button" data-zoom="fit" title="ملاءمة العرض">ملاءمة</button>
+          <button type="button" data-zoom="reset" title="الحجم الأصلي">100%</button>
+        </div>
+      </div>
+      <div id="tree-scroll" class="tree-scroll">
+        <div id="tree-empty" class="empty">
+          <p>ابحث عن حديث لترى أسانيده مدمجة في شجرة واحدة: الصحابي في الأعلى والمصنفون في الأسفل، مع الحلقة المشتركة وتواريخ وفاة الرواة المقدرة.</p>
+          <p class="en">Search a hadith to see its merged transmission tree, the common link and inferred death dates.</p>
+        </div>
+        <svg id="tree" role="img" aria-label="شجرة الأسانيد"></svg>
+      </div>
+    </section>
+    <aside id="panel" class="panel" aria-live="polite"></aside>
+  </main>
+
+  <footer class="site-footer">
+    <p>
+      البيانات مستخرجة من <a href="https://hdith.com/">hdith.com</a>
+      · مجموعة البيانات على <a href="https://huggingface.co/datasets/HeshamHaroon/isnad-chrono">Hugging Face</a>
+      · <a href="https://github.com/h9-tec/isnad-chrono">الشيفرة</a>
+      · الأرقام المشتقة بترخيص CC-BY-4.0 · لا يُعاد نشر نص الحديث.
+    </p>
+  </footer>
+
+  <script src="vendor/d3.v7.min.js"></script>
+  <script src="data.js"></script>
+  <script src="tree.js"></script>
+  <script src="explorer.js"></script>
+</body>
+</html>
