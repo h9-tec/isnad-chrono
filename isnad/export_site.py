@@ -97,22 +97,36 @@ def _str(v):
 
 
 KUNYA_CUTS = ("،", ",", ".", ":", "؛", " ويقال", " وقيل", " وفي ", " قال ")
-KUNYA_PREFIXES = ("أبو", "أبا", "أبي", "أم", "ابن", "أ")
+KUNYA_PREFIXES = ("أبو", "أبا", "أبي", "أم", "ابن", "أ", "ابو", "ابا", "ابي")
 KUNYA_MAX = 40
+KUNYA_LEAD = re.compile(r"^\s*(?:يقال|ويقال|وقيل)\s*:\s*")
+NAME_CUTS = (" وقيل", " ويقال", "،", ",", ":", "؛", " وفي ", " قال ")
+
+
+def _cut(s: str, cuts) -> str:
+    """``s`` with whitespace collapsed (CR/LF too), then cut before the first of ``cuts``."""
+    s = " ".join(s.split())
+    for c in cuts:
+        i = s.find(c)
+        if i >= 0:
+            s = s[:i]
+    return " ".join(s.split())
+
+
+def first_name(v):
+    """The first variant of a hdith.com name field (editorial «وقيل : …» notes cut), or None."""
+    s = _str(v)
+    return (_cut(s, NAME_CUTS) or None) if s is not None else None
 
 
 def first_kunya(v):
     """The first kunya in a hdith.com kunya field, without its editorial notes: the text before
-    the first of ``KUNYA_CUTS``, kept only if it starts like a kunya and is at most
+    the first of ``KUNYA_CUTS`` (after a «يقال :» lead-in), kept only if it starts like a kunya and is at most
     ``KUNYA_MAX`` chars, else None."""
     s = _str(v)
     if s is None:
         return None
-    for c in KUNYA_CUTS:
-        i = s.find(c)
-        if i >= 0:
-            s = s[:i]
-    s = " ".join(s.split())
+    s = _cut(KUNYA_LEAD.sub("", s), KUNYA_CUTS)
     if not s or len(s) > KUNYA_MAX or not s.startswith(KUNYA_PREFIXES):
         return None
     return s
@@ -185,7 +199,7 @@ def narrators_table(d: Path) -> list[dict]:
         t = dates.loc[rid] if rid in dates.index else None
         name = None
         if r is not None:
-            name = _str(r["abbrev"]) or _str(r["name"])
+            name = first_name(r["abbrev"]) or first_name(r["name"])
         ph = int(rid) in PLACEHOLDER_IDS
         if ph:
             name = PLACEHOLDER_NAME

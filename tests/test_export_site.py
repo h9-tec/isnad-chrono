@@ -9,7 +9,8 @@ import pytest
 
 from isnad import tree
 from isnad.edits import EDIT_COLS
-from isnad.export_site import (SiteContext, atlas_table, check_keys, first_kunya, group_json,
+from isnad.export_site import (SiteContext, atlas_table, check_keys, first_kunya, first_name,
+                               group_json,
                                group_path, meta_table, narrator_detail, narrator_path,
                                narrators_table, run_export_site, search_key, search_tables,
                                write_json)
@@ -415,14 +416,29 @@ def test_first_kunya_trims_editorial_notes():
     assert first_kunya("أبو بكر وقيل أبو عبد الله") == "أبو بكر"
     assert first_kunya(None) is None and first_kunya(float("nan")) is None
     assert first_kunya("أبو " + "ا" * 40) is None  # longer than 40 chars
+    assert first_kunya("يقال : أبو الزوائد") == "أبو الزوائد"
+    assert first_kunya("ويقال : أبو محمد ، ويقال : أبو الربيع") == "أبو محمد"
+    assert first_kunya("ابو يزيد") == "ابو يزيد"
+    assert first_kunya("أبو عبد الرحمن \r\nويقال : أبو زرعة") == "أبو عبد الرحمن"
+    assert first_kunya("يقال : إنه أبو عمرة") is None
+
+
+def test_first_name_keeps_first_variant():
+    assert first_name("عبيد الله بن عبد الرحمن وقيل : عبد الله بن عبد الرحمن ، وقيل : ابن أبي ذباب") \
+        == "عبيد الله بن عبد الرحمن"
+    assert first_name("أم قيس بنت محصن ، ويقال : آمنة") == "أم قيس بنت محصن"
+    assert first_name("حبويه ، إبراهيم بن المختار") == "حبويه"
+    assert first_name("سفيان بن عيينة") == "سفيان بن عيينة"
+    assert first_name("، x") is None and first_name(None) is None
 
 
 def test_narrators_kunya_is_trimmed(tmp_data):
     r = pd.read_parquet(tmp_data / "rawi.parquet")
     r["kunya"] = ["أبو عمارة ، ويقال : أبو عمار", "وفي كتاب أبي نعيم : كنيته أبو الربيع", None]
+    r["abbrev"] = ["فلان وقيل : علان", None, "، "]
     r.to_parquet(tmp_data / "rawi.parquet")
     by = {x["id"]: x for x in narrators_table(tmp_data)}
-    assert by[5]["kunya"] == "أبو عمارة"
+    assert by[5]["kunya"] == "أبو عمارة" and by[5]["name"] == "فلان"
 
 
 def test_bukhari_10_resolves_at_search_tables(tmp_data):
@@ -478,5 +494,11 @@ def test_no_long_strings_in_real_export():
                 worst = (len(v), f"{p}:{path}", v)
     assert worst[0] <= 80, worst
     nar = json.loads((out / "narrators.json").read_text(encoding="utf-8"))
-    k = nar["cols"].index("kunya")
+    k, n = nar["cols"].index("kunya"), nar["cols"].index("name")
     assert all(r[k] is None or len(r[k]) <= 40 for r in nar["rows"])
+    # 64, not 60: two real full nasabs are 61 and 63 chars (e.g. «عبد الله بن عبد العزيز بن عبد
+    # الله بن عبد الله بن عمر بن الخطاب»); they carry no editorial note and are not cut.
+    assert max(len(r[n]) for r in nar["rows"]) <= 64
+    notes = ("وقيل", "ويقال", ":", "،")
+    bad = [(r[0], v) for r in nar["rows"] for v in (r[n], r[k]) if v and any(x in v for x in notes)]
+    assert bad == [], bad[:5]
