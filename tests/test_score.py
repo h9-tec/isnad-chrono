@@ -135,14 +135,14 @@ def test_term_table():
 def test_score_cli_prints_term_table(tmp_path, capsys):
     from isnad import cli
     rawi = pd.DataFrame([_rawi_row(1, 197.0), _rawi_row(2, 219.0)])
-    ed = pd.DataFrame([dict(teacher_id=1, student_id=2, hadith_id=1, position=0, term="فيما قرأ",
+    ed = pd.DataFrame([dict(teacher_id=1, student_id=2, hadith_id=1, position=0, term="xyzterm",
                             chain_type=None, entry_kind="hadith")])
     ed.to_parquet(tmp_path / "e.parquet")
     rawi.to_parquet(tmp_path / "r.parquet")
     cli.main(["score", "--edges", str(tmp_path / "e.parquet"), "--rawi", str(tmp_path / "r.parquet"),
               "--out", str(tmp_path / "o.parquet")])
     out = capsys.readouterr().out
-    assert "unclassified 1" in out and "فيما قرأ\t1" in out
+    assert "unclassified 1" in out and "xyzterm\t1" in out
 
 
 import pytest  # noqa: E402
@@ -156,7 +156,13 @@ import pytest  # noqa: E402
     ("أخبراه", "explicit"), ("أخبرتني", "explicit"), ("حدثهم", "explicit"),
     ("في حكم العنعنة", "ambiguous"), ("قالت", "ambiguous"), ("فقال", "ambiguous"),
     ("يحدث عن", "ambiguous"),
-    ("قلت", "unclassified"),  # first-person speech, not a transmission verb: left unclassified
+    ("قلت", "explicit"),
+    ("نا", "explicit"), ("ثنا", "explicit"), ("أنا", "explicit"), ("نافع", "unclassified"),
+    ("قراءة عليه وأنا أسمع", "explicit"), ("فيما قرئ عليه", "explicit"), ("لقيت", "explicit"),
+    ("كتب", "explicit"), ("خطب", "explicit"), ("أتيت", "explicit"), ("قلنا", "explicit"),
+    ("دخلت على", "explicit"), ("حفظناه من", "explicit"), ("أسمعت", "explicit"),
+    ("يحدث", "ambiguous"), ("يخبر عن", "ambiguous"), ("سئل", "ambiguous"), ("يقول", "ambiguous"),
+    ("يذكر عن", "ambiguous"), ("زعم", "ambiguous"), ("قيل", "ambiguous"), ("يحدثان", "ambiguous"),
     ("حدثنا", "explicit"), ("عن", "ambiguous"), (None, "ambiguous"),
     ("أنبأنا", "explicit"), ("قرئ على", "explicit"), ("قال", "ambiguous"),
     ("xyz", "unclassified"),
