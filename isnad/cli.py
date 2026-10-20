@@ -1,4 +1,4 @@
-"""CLI: python -m isnad.cli <fetch|build|gold|score|validate|report|export> ..."""
+"""CLI: python -m isnad.cli <fetch|build|chains|gold|score|validate|report|export> ..."""
 
 import argparse
 
@@ -40,6 +40,10 @@ def main(argv=None) -> None:
     bp.add_argument("--kind", choices=["rawi", "hadith", "all"], default="all")
     bp.add_argument("--cache-root", default="data/raw/html")
     bp.add_argument("--out-dir", default="data")
+    cp = top.add_parser("chains", help="tahwil-aware chains from the annotated isnad html")
+    cp.add_argument("--cache-root", default="data/raw/html")
+    cp.add_argument("--out", default="data/chains.parquet")
+    cp.add_argument("--limit", type=int, help="only the first N cached hadith pages")
     sp = top.add_parser("score")
     sp.add_argument("--edges", default="data/edges.parquet")
     sp.add_argument("--rawi", default="data/rawi.parquet")
@@ -97,6 +101,11 @@ def main(argv=None) -> None:
             for rel, c in rels.items():
                 print(src, rel, {k: c[k] for k in ("n", "auroc", "recall@0.05", "n_in_corpus",
                                                    "text_recall_in_corpus_excl_denial")})
+        return
+
+    if args.cmd == "chains":
+        from isnad import chains
+        chains.run_chains(args.cache_root, args.out, limit=args.limit)
         return
 
     if args.cmd == "gold":
