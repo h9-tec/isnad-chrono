@@ -25,9 +25,9 @@
     const aliases = (idx && idx.aliases) || {};
     const books = (idx && idx.books) || {};
     const lower = book.toLowerCase();
-    if (aliases[lower]) return aliases[lower];
-    if (aliases[book]) return aliases[book];
-    if (books[lower]) return lower;
+    if (Object.hasOwn(aliases, lower)) return aliases[lower];
+    if (Object.hasOwn(aliases, book)) return aliases[book];
+    if (Object.hasOwn(books, lower)) return lower;
     for (const [slug, title] of Object.entries(books)) if (title === book) return slug;
     return null;
   }
@@ -85,6 +85,8 @@
   let state = null; // {g, layout, meta, nm}
   let scale = 1;
   let normIndex = null;
+  let loadToken = 0; // newest showGroup request wins
+  const GROUP_RE = /^t[kg]-\d+$/;
 
   function bookTitle(slug, meta) {
     const b = meta && (meta.books || []).find((x) => x.slug === slug);
@@ -128,15 +130,15 @@
       }
       if (nq.kind === "hadith") {
         const shard = await ISNAD.hadithShard(nq.key);
-        return choose(shard[nq.key], `رقم الحديث ${nq.key}`);
+        return choose(Object.hasOwn(shard, nq.key) ? shard[nq.key] : null, `رقم الحديث ${nq.key}`);
       }
       if (nq.kind === "numbering") {
-        if (nq.unknownBook && !(idx.books || {})[nq.slug]) {
+        if (nq.unknownBook && !Object.hasOwn(idx.books || {}, nq.slug)) {
           return setResults(`<p class="error">كتاب غير معروف: ${esc(nq.slug)}. جرّب bukhari أو مسلم أو b-1…</p>`);
         }
         const shard = await ISNAD.numberingShard(nq.slug);
-        const title = (idx.books || {})[nq.slug] || nq.slug;
-        return choose(shard.numbering[nq.num], `${title} ${nq.num}`);
+        const title = Object.hasOwn(idx.books || {}, nq.slug) ? idx.books[nq.slug] : nq.slug;
+        return choose(Object.hasOwn(shard.numbering, nq.num) ? shard.numbering[nq.num] : null, `${title} ${nq.num}`);
       }
       return narratorSearch(nq.key);
     } catch (e) {
@@ -200,7 +202,16 @@
 
   async function showGroup(id, opts) {
     opts = opts || {};
-    id = String(id).toLowerCase();
+    id = String(id).trim().toLowerCase();
+    const token = ++loadToken;
+    if (!GROUP_RE.test(id)) {
+      state = null;
+      svg.selectAll("*").remove();
+      svg.attr("width", 0).attr("height", 0);
+      empty.hidden = false;
+      panel.innerHTML = `<p class="error">معرّف غير صالح: <span dir="ltr">${esc(id)}</span> <span class="en">invalid group id (expected tk-N or tg-N)</span></p>`;
+      return;
+    }
     const fit = new URLSearchParams(location.search).get("z") === "fit";
     if (opts.push !== false) setURL({ g: id }, true);
     else if (!new URLSearchParams(location.search).has("q")) setURL(fit ? { g: id, z: "fit" } : { g: id }, false);
@@ -209,12 +220,14 @@
     try {
       [g, nm, meta] = await Promise.all([ISNAD.group(id), ISNAD.narrators(), ISNAD.meta()]);
     } catch (e) {
+      if (token !== loadToken) return;
       panel.innerHTML =
         e.status === 404
           ? `<p class="error">المجموعة <span dir="ltr">${esc(id)}</span> غير موجودة.</p>`
           : `<p class="error">تعذر التحميل: ${esc(e.message)}</p>`;
       return;
     }
+    if (token !== loadToken) return; // a newer request superseded this one
     const layout = IsnadTree.layoutGroup(g, nm);
     state = { g, nm, meta, layout };
     document.title = `${g.id} · isnad-chrono`;
@@ -255,7 +268,9 @@
     else if (kind === "out") scale = Math.max(0.05, scale / 1.25);
     else if (kind === "reset") scale = 1;
     else if (kind === "fit") scale = Math.min(1, (scroller.clientWidth - 8) / W);
-    draw(false);
+    // viewBox is fixed by drawGroup; zoom only resizes the SVG (no re-render,
+    // so the selection highlight and focus survive).
+    svg.attr("width", W * scale).attr("height", (state.layout.height || 1) * scale);
     scroller.scrollLeft = Math.max(0, centerFrac * W * scale - scroller.clientWidth / 2);
   }
 
@@ -275,7 +290,10 @@
       if (i.blo != null || i.bhi != null) rows.push(`<dt>الولادة المقدرة</dt><dd><bdi dir="ltr">${i.blo ?? "?"}–${i.bhi ?? "?"}</bdi> هـ</dd>`);
       rows.push(`<dt>الدعم</dt><dd>${i.support ?? 0}</dd><dt>عدد الأسانيد</dt><dd>${i.n_chains ?? 0}</dd>`);
     }
-    rows.push(`<dt>العمق</dt><dd>${d.depth} · k=${d.k} · ${d.n_desc} مصنف تحته</dd>`);
+    rows.push(`<dt>العمق</dt><dd>${d.depth ?? "?"} · k=${d.k} · ${d.n_desc} مصنف تحته</dd>`);
+    const incoming = [];
+    for (const c of state.layout.components)
+      for (const l of c.links) if (l.target.id === d.id) incoming.push(l);
     if (d.edits.length)
       rows.push(
         `<dt>تغييرات اللفظ</dt><dd>${d.edits.map((e) => `مقطع ${e.seg}: ${esc(e.type)} (${esc(e.status)})`).join("<br>")}</dd>`
@@ -284,7 +302,12 @@
       i && i.placeholder
         ? '<p class="muted">راوٍ غير مسمى في الإسناد.</p>'
         : `<p class="links"><a href="narrator.html?id=${d.id}">صفحة الراوي</a> · <a href="${ISNAD.rawiUrl(d.id)}" rel="noopener">hdith.com</a></p>`;
-    box.innerHTML = `<h3>${esc(d.name)}</h3><dl class="facts">${rows.join("")}</dl>${links}`;
+    const inc = incoming.length
+      ? `<p class="small">يروي عن <span class="en">incoming edges</span></p><ul class="incoming small">${incoming
+          .map((l) => `<li>${esc(l.source.name)}: ${l.term ? esc(l.term) : '<span class="muted">صيغة غير معروفة</span>'} <span class="muted">(${l.n} سند)</span></li>`)
+          .join("")}</ul>`
+      : "";
+    box.innerHTML = `<h3>${esc(d.name)}</h3><dl class="facts">${rows.join("")}</dl>${inc}${links}`;
     box.hidden = false;
   }
 

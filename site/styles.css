@@ -90,10 +90,12 @@ p .en, .date-line .en { display: block; }
 #tree .interval { font-size: 11px; fill: var(--muted); paint-order: stroke; stroke: #fff; stroke-width: 3px; }
 #tree .edge { fill: none; stroke: #9aa0a6; }
 #tree .link.extra .edge { stroke: #b08bbb; stroke-opacity: 0.8; }
+#tree .link.back .edge { stroke: #c0392b; stroke-dasharray: 4 3; }
 #tree .hit { fill: none; stroke: transparent; stroke-width: 10px; pointer-events: stroke; }
 #tree .link.hl .edge { stroke: var(--edit); stroke-opacity: 1; }
 #tree .arrowhead { fill: #b08bbb; }
-#tree .node { cursor: pointer; }
+#tree .node { cursor: pointer; outline: none; }
+#tree .node:focus-visible .dot { stroke: var(--accent); stroke-width: 4px; }
 #tree .dot { stroke: #ffffff; stroke-width: 1.5px; }
 #tree .node.placeholder .dot { stroke: #888; stroke-dasharray: 3 2; }
 #tree .node.placeholder { cursor: default; }
@@ -120,6 +122,7 @@ p .en, .date-line .en { display: block; }
 .date-line { background: #f1f7f6; border-inline-start: 3px solid var(--accent); padding: 6px 10px; border-radius: 4px; }
 .selected { border: 1px solid var(--line); border-radius: 8px; padding: 6px 10px; margin-top: 12px; }
 .selected h3 { margin-top: 4px; }
+.selected .incoming { margin: 4px 0; padding-inline-start: 18px; }
 .edits { border-collapse: collapse; width: 100%; }
 .edits th { text-align: start; font-weight: normal; padding: 2px 0; }
 .edits td { text-align: end; font-variant-numeric: tabular-nums; }

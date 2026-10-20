@@ -2,7 +2,8 @@
 import re
 from pathlib import Path
 
-SITE = Path("site")
+ROOT = Path(__file__).resolve().parents[1]
+SITE = ROOT / "site"
 
 
 def test_site_files_exist_and_reference_vendor():
@@ -11,9 +12,29 @@ def test_site_files_exist_and_reference_vendor():
     assert (SITE / "vendor/d3.v7.min.js").stat().st_size > 200_000
 
 
+def _is_external(url: str) -> bool:
+    u = url.strip().lower()
+    return u.startswith(("http://", "https://", "//")) or ":" in u.split("/")[0]
+
+
 def test_no_external_scripts():
-    for p in SITE.glob("*.html"):
-        assert "https://" not in re.findall(r'<script[^>]+src="([^"]+)"', p.read_text()).__str__()
+    pages = list(SITE.glob("*.html"))
+    assert pages
+    for p in pages:
+        html = p.read_text()
+        for src in re.findall(r"<script[^>]+src=[\"']([^\"']+)", html):
+            assert not _is_external(src), (p.name, src)
+        for tag in re.findall(r"<link\b[^>]*>", html):
+            if re.search(r"rel=[\"']?stylesheet", tag):
+                href = re.search(r"href=[\"']([^\"']+)", tag).group(1)
+                assert not _is_external(href), (p.name, href)
+
+
+def test_external_detector():
+    for bad in ("https://x/y.js", "http://x/y.js", "//cdn.x/y.js", "HTTPS://X"):
+        assert _is_external(bad)
+    for ok in ("vendor/d3.v7.min.js", "styles.css", "./data.js"):
+        assert not _is_external(ok)
 
 
 def test_vendored_d3_is_pinned_and_licensed():
@@ -45,3 +66,12 @@ def test_tree_and_explorer_interfaces():
     tree = (SITE / "tree.js").read_text()
     assert "function layoutGroup" in tree and "function drawGroup" in tree
     assert "function normalizeQuery" in (SITE / "explorer.js").read_text()
+
+
+def test_explorer_hardening():
+    js = (SITE / "explorer.js").read_text()
+    assert "/^t[kg]-\\d+$/" in js and "معرّف غير صالح" in js
+    assert "Object.hasOwn(aliases" in js and "loadToken" in js
+    tree = (SITE / "tree.js").read_text()
+    assert "longestPathLayers" in tree and '"tabindex", 0' in tree
+    assert 'role="img"' not in (SITE / "index.html").read_text()

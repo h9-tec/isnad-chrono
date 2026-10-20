@@ -1,12 +1,13 @@
 // Layout + drawing of a group's merged transmission graph (one drawing per root).
 //
-// The export's `depth` is a shortest-path (BFS) depth in a DAG, so it is not
-// parent depth + 1 along every chain. We therefore build the graph from the
-// chains themselves (edges = consecutive pairs, teacher -> student), pick a
-// spanning tree whose parent of each node is the first predecessor met on any
-// chain with depth == node depth - 1 (one always exists for a BFS depth), lay
-// that tree out with d3.tree (so y = depth), and then draw ALL chain edges;
-// edges outside the spanning tree are thinner curves with an arrowhead.
+// The drawing is built from the chains themselves (edges = consecutive pairs,
+// teacher -> student), one component per root. Rows are assigned by the
+// LONGEST path from the root (topological order over the chain edges), so
+// every chain edge points strictly downward. The export's BFS `depth` is kept
+// for the tooltip and the side panel only. A spanning tree (parent = first
+// predecessor met on any chain whose layer is one less) is laid out with
+// d3.tree, so y = layer; ALL chain edges are then drawn, those outside the
+// spanning tree (they skip layers) as thinner curves with an arrowhead.
 (function () {
   "use strict";
 
@@ -39,38 +40,33 @@
 
     for (const root of group.roots || []) {
       const chains = (group.chains || []).filter((c) => c[0] === root);
-      const depthOf = (id) => {
-        const n = byKey.get(`${root}:${id}`);
-        return n ? n.depth : null;
-      };
       const edges = new Map(); // "a>b" -> {a, b, n}
       const order = new Map([[root, 0]]); // id -> first appearance
-      const parent = new Map();
       for (const ch of chains) {
         for (const id of ch) if (!order.has(id)) order.set(id, order.size);
         for (let i = 1; i < ch.length; i++) {
-          const a = ch[i - 1];
-          const b = ch[i];
-          const key = `${a}>${b}`;
+          const key = `${ch[i - 1]}>${ch[i]}`;
           const e = edges.get(key);
           if (e) e.n++;
-          else edges.set(key, { a, b, n: 1 });
-          if (b !== root && !parent.has(b)) {
-            const da = depthOf(a);
-            const db = depthOf(b);
-            if (da != null && db != null && da === db - 1) parent.set(b, a);
-          }
+          else edges.set(key, { a: ch[i - 1], b: ch[i], n: 1 });
         }
       }
-      // Defensive fallback (does not trigger on a valid BFS depth): attach to
-      // a strictly shallower predecessor, else to the root; never makes a cycle.
+      const layer = longestPathLayers(root, order, edges, (id) => {
+        const n = byKey.get(`${root}:${id}`);
+        return n ? n.depth : null;
+      });
+      // Spanning tree: first predecessor (in chain order) one layer up; one
+      // always exists under longest-path layering.
+      const parent = new Map();
+      for (const ch of chains) {
+        for (let i = 1; i < ch.length; i++) {
+          const a = ch[i - 1];
+          const b = ch[i];
+          if (b !== root && !parent.has(b) && layer.get(a) === layer.get(b) - 1) parent.set(b, a);
+        }
+      }
       for (const id of order.keys()) {
-        if (id === root || parent.has(id)) continue;
-        const d = depthOf(id);
-        const e = [...edges.values()].find(
-          (e) => e.b === id && d != null && depthOf(e.a) != null && depthOf(e.a) < d
-        );
-        parent.set(id, e ? e.a : root);
+        if (id !== root && !parent.has(id)) parent.set(id, root); // defensive; not expected
       }
 
       const kids = new Map();
@@ -97,9 +93,9 @@
       const nodes = new Map();
       h.each((d) => {
         const id = d.data;
-        const src = byKey.get(`${root}:${id}`) || { id, root, depth: d.depth, k: 0, n_desc: 0 };
-        const depth = src.depth ?? d.depth;
-        maxDepth = Math.max(maxDepth, depth);
+        const src = byKey.get(`${root}:${id}`) || { id, root, depth: null, k: 0, n_desc: 0 };
+        const lay = d.depth; // == layer.get(id) by construction of the spanning tree
+        maxDepth = Math.max(maxDepth, lay);
         const info = narrators.get(id) || null;
         const edits = byNode[String(id)] || [];
         nodes.set(id, {
@@ -107,7 +103,8 @@
           id,
           // RTL: the first chain is drawn on the right.
           x: maxX - d.x + NODE_W / 2,
-          y: depth * LAYER_H,
+          layer: lay,
+          y: lay * LAYER_H,
           info,
           name: info ? info.name : `p-${id}`,
           placeholder: !!(info && info.placeholder),
@@ -123,12 +120,13 @@
         term: terms[`${e.a}-${e.b}`] || null,
         n: e.n,
         tree: parent.get(e.b) === e.a,
+        back: layer.get(e.b) <= layer.get(e.a),
       }));
       components.push({
         root,
         width: maxX - minX + NODE_W,
         height: maxDepth * LAYER_H + PAD_TOP + PAD_BOTTOM,
-        maxLayer: Math.max(...d3.rollup([...nodes.values()], (v) => v.length, (n) => n.depth).values()),
+        maxLayer: Math.max(...d3.rollup([...nodes.values()], (v) => v.length, (n) => n.layer).values()),
         nChains: chains.length,
         nodes: [...nodes.values()],
         links,
@@ -146,6 +144,45 @@
     }
     const height = Math.max(0, ...components.map((c) => c.height));
     return { components, width, height };
+  }
+
+  // Longest path from the root over the chain edges (Kahn's algorithm). A few
+  // groups have contradictory chains (A before B in one chain, B before A in
+  // another), i.e. a cycle; when Kahn stalls we release the unprocessed node
+  // with the smallest BFS depth (then earliest appearance), so only the edges
+  // closing such a cycle can point upward (`back` edges).
+  function longestPathLayers(root, order, edges, depthOf) {
+    const indeg = new Map([...order.keys()].map((id) => [id, 0]));
+    const out = new Map();
+    for (const { a, b } of edges.values()) {
+      indeg.set(b, indeg.get(b) + 1);
+      if (!out.has(a)) out.set(a, []);
+      out.get(a).push(b);
+    }
+    const layer = new Map([...order.keys()].map((id) => [id, 0]));
+    const done = new Set();
+    const queue = [...order.keys()].filter((id) => indeg.get(id) === 0);
+    while (done.size < order.size) {
+      if (!queue.length) {
+        let pick = null;
+        for (const id of order.keys()) {
+          if (done.has(id)) continue;
+          const key = [depthOf(id) ?? Infinity, order.get(id)];
+          if (!pick || key[0] < pick[1][0] || (key[0] === pick[1][0] && key[1] < pick[1][1])) pick = [id, key];
+        }
+        queue.push(pick[0]);
+      }
+      const a = queue.shift();
+      if (done.has(a)) continue;
+      done.add(a);
+      for (const b of out.get(a) || []) {
+        if (done.has(b)) continue; // closes a cycle: drawn as a back edge
+        layer.set(b, Math.max(layer.get(b), layer.get(a) + 1));
+        indeg.set(b, indeg.get(b) - 1);
+        if (indeg.get(b) === 0) queue.push(b);
+      }
+    }
+    return layer;
   }
 
   function bend(s, t) {
@@ -168,6 +205,7 @@
     if (i.by != null) lines.push(`الولادة المسجلة: ${i.by}${i.bk ? ` (${i.bk})` : ""}`);
     if (n.interval) lines.push(`الوفاة المقدرة: \u2066${i.dlo ?? "?"}–${i.dhi ?? "?"}\u2069 هـ (${i.method})`);
     lines.push(`عدد الأسانيد: ${i.n_chains ?? 0}`);
+    if (n.depth != null) lines.push(`العمق (أقصر مسار): ${n.depth}`);
     return lines.join("\n");
   }
 
@@ -211,7 +249,7 @@
         .selectAll("g.link")
         .data(comp.links)
         .join("g")
-        .attr("class", (d) => (d.tree ? "link tree" : "link extra"));
+        .attr("class", (d) => (d.tree ? "link tree" : d.back ? "link extra back" : "link extra"));
       // Tree links start below the source's two label lines so they do not cross them.
       const pathOf = (d) =>
         d.tree
@@ -243,7 +281,16 @@
         .attr("class", (d) => `node${d.placeholder ? " placeholder" : ""}${d.info ? "" : " unknown"}`)
         .attr("data-id", (d) => d.id)
         .attr("transform", (d) => `translate(${d.x},${d.y})`)
-        .on("click", (ev, d) => opts.onNode && opts.onNode(d, comp));
+        .attr("tabindex", 0)
+        .attr("role", "button")
+        .attr("aria-label", (d) => `${d.name}${d.interval ? ` ${d.interval}` : ""}`)
+        .on("click", (ev, d) => opts.onNode && opts.onNode(d, comp))
+        .on("keydown", (ev, d) => {
+          if (ev.key === "Enter" || ev.key === " ") {
+            ev.preventDefault();
+            if (opts.onNode) opts.onNode(d, comp);
+          }
+        });
       node.append("title").text(nodeTitle);
 
       // Common-link rings: k2 -> one ring (double), k3 -> two rings (triple);
