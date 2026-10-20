@@ -37,7 +37,7 @@ from isnad.constants import K_CL
 log = logging.getLogger(__name__)
 
 
-def _clean(chain) -> tuple[tuple[int, ...], bool]:
+def clean_chain(chain) -> tuple[tuple[int, ...], bool]:
     """Collapse consecutive duplicates; truncate before the first non-consecutive repeat.
 
     Returns (chain, truncated)."""
@@ -52,6 +52,9 @@ def _clean(chain) -> tuple[tuple[int, ...], bool]:
         out.append(r)
         seen.add(r)
     return tuple(out), False
+
+
+_clean = clean_chain  # deprecated alias, kept for one release
 
 
 @dataclass
@@ -124,7 +127,7 @@ def merge_tree(chains: list[list[int]]) -> Tree:
     cleaned: list[tuple[int, ...]] = []
     n_truncated = 0
     for ch in chains:
-        c, truncated = _clean(ch)
+        c, truncated = clean_chain(ch)
         n_truncated += truncated
         if c and not (truncated and len(c) < 2):
             cleaned.append(c)
@@ -314,7 +317,7 @@ def run_tree(chains_path, occurrences_path, groups_path, dates_path, out_dir,
         rows = []
         for g, ids in zip(sh.group_id, sh.hadith_ids):
             for h in ids if ids is not None else []:
-                comps = sorted({_clean(ch)[0][0] for ch in chains.get(int(h), []) if len(ch)})
+                comps = sorted({clean_chain(ch)[0][0] for ch in chains.get(int(h), []) if len(ch)})
                 rows += ([(g, int(h), c) for c in comps] or [(g, int(h), None)])
         sc = pd.DataFrame(rows, columns=["group_id", "hadith_id", "companion_rawi_id"])
         sc["companion_rawi_id"] = sc.companion_rawi_id.astype("Int64")

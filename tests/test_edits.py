@@ -1,5 +1,3 @@
-import math
-
 import pandas as pd
 
 from isnad.cli import main
@@ -69,7 +67,8 @@ def _occ():
 def test_edit_type_classification():
     e = edits_table(_segments(), _occ(), CHAINS)
     assert list(e.columns) == ["group_id", "seg_no", "introduced_by_rawi_id", "generation_depth",
-                               "edit_type", "ambiguous", "n_carriers", "n_base_carriers"]
+                               "edit_type", "ambiguous", "is_leaf_edit", "n_carriers",
+                               "n_base_carriers"]
     assert list(e.seg_no) == [0, 2, 3, 5]  # base segments are not edits
     assert list(e.edit_type) == ["ins", "sub", "sub", "del"]
     # seg 2 and 3 substitute the same base text: base carriers exclude both substitutions' carriers
@@ -78,6 +77,7 @@ def test_edit_type_classification():
     assert list(e.introduced_by_rawi_id) == [2, 10, 12, 1]
     assert list(e.generation_depth) == [1, 3, 2, 0]
     assert list(e.ambiguous) == [False, False, False, True]
+    assert list(e.is_leaf_edit) == [False, True, True, False]
 
 
 def test_rates_by_depth():
@@ -85,13 +85,21 @@ def test_rates_by_depth():
     e = edits_table(_segments(), _occ(), CHAINS, stats=stats)
     assert stats["carriers_without_chain"] == 0
     r = edit_rates(e, {"g": [c for h in (1, 2, 3, 77) for c in CHAINS.get(h, [])]})
-    assert list(r.columns) == ["depth", "n_transmissions", "n_edits", "rate"]
+    assert list(r.columns) == ["depth", "n_transmissions", "n_edits", "rate", "n_edits_nonleaf",
+                               "rate_nonleaf"]
     assert list(r.depth) == [0, 1, 2, 3]
     # student depths of links: h1 2,3,10 -> 1,2,3; h2 2,4,11 -> 1,2,3; h3 5,12 -> 1,2
     assert list(r.n_transmissions) == [0, 3, 3, 2]
     assert list(r.n_edits) == [1, 1, 1, 1]
-    assert math.isnan(r.rate[0])
+    assert r.rate[0] is pd.NA and r.rate_nonleaf[0] is pd.NA
     assert list(r.rate[1:]) == [1 / 3, 1 / 3, 1 / 2]
+    # seg 2 (-> 10) and seg 3 (-> 12) are single-witness compiler edits
+    assert list(r.n_edits_nonleaf) == [1, 1, 0, 0]
+    assert list(r.rate_nonleaf[1:]) == [1 / 3, 0, 0]
+    # rate is edits per transmission and can exceed 1
+    many = pd.concat([e[e.seg_no == 2]] * 3, ignore_index=True)
+    r2 = edit_rates(many, {"g": [c for cs in CHAINS.values() for c in cs]})
+    assert r2.set_index("depth").rate[3] == 3 / 2
 
 
 def test_cli_edits(tmp_path):
@@ -122,4 +130,4 @@ def test_carrier_outside_occurrences_joins_tree():
     stats: dict = {}
     e = edits_table(seg, _occ(), chains, stats=stats)
     assert (e.introduced_by_rawi_id[0], e.generation_depth[0], e.n_base_carriers[0]) == (13, 3, 4)
-    assert stats["carrier_refs_outside_occurrences"] == 1
+    assert stats["carriers_outside_group"] == 1

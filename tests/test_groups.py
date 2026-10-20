@@ -115,3 +115,25 @@ def test_chunked_flush(tmp_path):
         c.add(dict(group_id="g", hadith_id=i, book_slug="b", numbering="1"))
     c.close()
     assert len(pd.read_parquet(tmp_path / "o.parquet")) == 5
+
+
+def test_empty_texts_hash_to_none(tmp_path):
+    from isnad.groups import GroupRecord, _segments
+    segs = _segments({"segments": [
+        {"kind": "substitution", "surface_text": "زاد", "hids": [3]},  # before any base: insertion
+        {"kind": "base", "text": "قال رسول الله"},
+        {"kind": "substitution", "surface_text": " َ ", "hids": [1]},  # empty after norm
+        {"kind": "substitution", "surface_text": "قال النبي", "hids": [2]},
+        {"kind": "base", "text": "  "},
+    ]})
+    assert [(s.kind, s.base_hash is None, s.variant_hash is None) for s in segs] == [
+        ("substitution", True, False), ("base", False, True), ("substitution", False, True),
+        ("substitution", False, False), ("base", True, True)]
+    from isnad.groups import _Sink
+    s = _Sink(tmp_path, {1})
+    s.add(GroupRecord("tk-1", 1, 1, ["b-1"], [(1, "b-1", "1")], segs, [], []))
+    s.close()
+    txt = pd.read_parquet(tmp_path / "text" / "segments_text.parquet")
+    assert len(txt) == 3 and all(t.strip() for t in txt["text"])
+    assert set(txt["hash"]) == {hash_text("زاد"), hash_text("قال رسول الله"),
+                                hash_text("قال النبي")}

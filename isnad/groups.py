@@ -1,6 +1,8 @@
 """Takhrij groups, word-level variant alignment and shawahid from the cached hadith pages.
 
-Text never leaves the local text table: ``segments.parquet`` carries only hashes.
+Text never leaves the local text table: ``segments.parquet`` carries only hashes. A text that is
+empty after normalisation gets hash None (no text-table entry): an empty substitution surface is a
+deletion (variant_hash None), an empty or missing base an insertion (base_hash None).
 
 The build streams: a group is written the first time it is seen and only its signature and
 segment count are kept afterwards. Dedup rule: FIRST WINS. A later page of the same group
@@ -29,6 +31,13 @@ _WS = re.compile(r"\s+")
 
 def hash_text(s: str) -> str:
     return hashlib.sha256(_WS.sub(" ", _norm(s)).strip().encode("utf-8")).hexdigest()[:16]
+
+
+def hash_or_none(s: str | None) -> str | None:
+    """hash_text, or None when the text is empty after normalisation (an insertion/deletion)."""
+    if s is None or not _WS.sub(" ", _norm(s)).strip():
+        return None
+    return hash_text(s)
 
 
 @dataclass(frozen=True, slots=True)
@@ -61,12 +70,12 @@ def _segments(variants) -> list[Segment]:
         kind = raw.get("kind")
         if kind == "base":
             base_text = raw.get("text") or ""
-            out.append(Segment(len(out), "base", hash_text(base_text), None, [], base_text, None))
+            out.append(Segment(len(out), "base", hash_or_none(base_text), None, [], base_text, None))
         elif kind == "substitution":
             vt = raw.get("surface_text") or ""
             out.append(Segment(
                 len(out), "substitution",
-                hash_text(base_text) if base_text is not None else None, hash_text(vt),
+                hash_or_none(base_text), hash_or_none(vt),
                 [int(h) for h in raw.get("hids") or []], base_text, vt))
     return out
 

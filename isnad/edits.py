@@ -2,9 +2,10 @@
 
 Each substitution segment of a takhrij group is a wording change carried by some witnesses
 (carrier hadith_ids); every other occurrence of the group reads the base text there (base
-carriers). Consecutive substitutions after one base segment are alternatives for the same base
-text, so the base carriers of a substitution are the group's occurrences minus the carriers of
-every substitution in that slot.
+carriers). seg_no is unique per row, so substitutions are grouped by the base segment
+immediately preceding them (consecutive substitutions are alternatives for the same base text;
+substitutions before any base form their own slot): the base carriers of a substitution are the
+group's occurrences minus the carriers of every substitution against that base segment.
 
 Attribution: the candidates are the narrators that lie on every parsed chain of every carrier
 (ancestor-or-self of each chain's compiler). The lowest one (max BFS depth in its component;
@@ -13,11 +14,14 @@ when it also lies on a base carrier's chain (it transmitted the base text too), 
 candidate exists (carriers under different Companions, or no carrier has a chain).
 
 Edit rates: per depth d, ``n_transmissions`` counts (hadith, chain) links whose student is at
-depth d, summed over groups; ``n_edits`` counts attributed edits at depth d. Depth 0 (the
-Companion) is never a student, so its rate is NaN.
+depth d, summed over groups; ``n_edits`` counts attributed edits at depth d (ambiguous ones
+included). ``rate`` is edits per transmission, not a probability: one transmission can carry
+several edits, so it can exceed 1. ``is_leaf_edit`` marks an edit attributed to a
+chain-terminal (compiler), i.e. a single-witness variant; ``n_edits_nonleaf``/``rate_nonleaf``
+exclude those. Depth 0 (the Companion) is never a student: n_transmissions 0, rates null.
 
 A carrier missing from the group's occurrence list still joins the group's tree (and its
-transmissions are counted), but it is never a base carrier. Chains are cleaned exactly as ``merge_tree`` does (repeats collapsed / truncated).
+transmissions are counted), but it is never a base carrier (``carriers_outside_group`` stat). Chains are cleaned exactly as ``merge_tree`` does (repeats collapsed / truncated).
 """
 
 from collections import Counter
@@ -26,7 +30,7 @@ from pathlib import Path
 
 import pandas as pd
 
-from isnad.tree import Tree, _clean, load_chains, merge_tree
+from isnad.tree import Tree, clean_chain, load_chains, merge_tree
 
 
 @dataclass(frozen=True)
@@ -39,7 +43,7 @@ class Attribution:
 def _cleaned(raw) -> list[tuple[int, ...]]:
     out = []
     for ch in raw or []:
-        c, truncated = _clean(ch)
+        c, truncated = clean_chain(ch)
         if c and not (truncated and len(c) < 2):
             out.append(c)
     return out
@@ -74,7 +78,7 @@ def _edit_type(base_hash, variant_hash) -> str:
 
 
 EDIT_COLS = ["group_id", "seg_no", "introduced_by_rawi_id", "generation_depth", "edit_type",
-             "ambiguous", "n_carriers", "n_base_carriers"]
+             "ambiguous", "is_leaf_edit", "n_carriers", "n_base_carriers"]
 
 
 def edits_table(segments: pd.DataFrame, occurrences: pd.DataFrame,
@@ -98,7 +102,7 @@ def edits_table(segments: pd.DataFrame, occurrences: pd.DataFrame,
             slots.setdefault(slot, set()).update(car)
             subs.append((slot, r, car))
         witnesses = occ.union(*slots.values())
-        st["carrier_refs_outside_occurrences"] += sum(len(car - occ) for _, _, car in subs)
+        st["carriers_outside_group"] += len(witnesses - occ)
         tree = merge_tree([c for h in sorted(witnesses) for c in chains_by_hadith.get(h, [])])
         cleaned: dict[int, list] = {}
         for slot, r, car in subs:
@@ -114,13 +118,16 @@ def edits_table(segments: pd.DataFrame, occurrences: pd.DataFrame,
             rows.append({"group_id": g, "seg_no": int(r.seg_no), "introduced_by_rawi_id": a.rawi_id,
                          "generation_depth": a.depth,
                          "edit_type": _edit_type(r.base_hash, r.variant_hash),
-                         "ambiguous": a.ambiguous, "n_carriers": len(car),
+                         "ambiguous": a.ambiguous,
+                         "is_leaf_edit": a.rawi_id is not None and a.rawi_id in tree.terminals,
+                         "n_carriers": len(car),
                          "n_base_carriers": len(base)})
     e = pd.DataFrame(rows, columns=EDIT_COLS)
     e["seg_no"] = e.seg_no.astype("int64")
     e["introduced_by_rawi_id"] = pd.array(list(e.introduced_by_rawi_id), dtype="Int64")
     e["generation_depth"] = pd.array(list(e.generation_depth), dtype="Int64")
     e["ambiguous"] = e.ambiguous.astype(bool)
+    e["is_leaf_edit"] = e.is_leaf_edit.astype(bool)
     e["n_carriers"] = e.n_carriers.astype("int64")
     e["n_base_carriers"] = e.n_base_carriers.astype("int64")
     if stats is not None:
@@ -140,12 +147,20 @@ def edit_rates(edits: pd.DataFrame, chains: dict[str, list[list[int]]]) -> pd.Da
         for c in tree.chains:
             d = tree.component(c[0]).depth
             trans.update(d[n] for n in c[1:])
-    n_edits = Counter(int(x) for x in edits.generation_depth.dropna())
+    att = edits[edits.generation_depth.notna()]
+    n_edits = Counter(int(x) for x in att.generation_depth)
+    n_nonleaf = Counter(int(x) for x in att.generation_depth[~att.is_leaf_edit.astype(bool)])
     depths = sorted(set(trans) | set(n_edits))
     r = pd.DataFrame({"depth": depths, "n_transmissions": [trans[d] for d in depths],
-                      "n_edits": [n_edits[d] for d in depths]}, dtype="int64")
-    r["rate"] = r.n_edits / r.n_transmissions.where(r.n_transmissions > 0)
-    return r
+                      "n_edits": [n_edits[d] for d in depths],
+                      "n_edits_nonleaf": [n_nonleaf[d] for d in depths]}, dtype="int64")
+
+    def _rate(n):
+        return pd.array([x / t if t else None for x, t in zip(n, r.n_transmissions)],
+                        dtype="Float64")
+    r["rate"] = _rate(r.n_edits)
+    r["rate_nonleaf"] = _rate(r.n_edits_nonleaf)
+    return r[["depth", "n_transmissions", "n_edits", "rate", "n_edits_nonleaf", "rate_nonleaf"]]
 
 
 def group_witnesses(segments: pd.DataFrame, occurrences: pd.DataFrame) -> dict[str, set[int]]:
