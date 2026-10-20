@@ -79,3 +79,6 @@ YEAR_LO, YEAR_HI = 0, 1500  # prior bounds (AH) for unknown birth/death
 # < 20), so the birth prior opens AGE_MAX years below YEAR_LO; with [0, 1500] those deaths would
 # be infeasible before any link is read.
 BIRTH_LO = YEAR_LO - AGE_MAX
+
+# Common links (isnad.tree): branch thresholds k for the k-common-link of a merged chain tree
+K_CL = (2, 3)

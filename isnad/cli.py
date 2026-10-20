@@ -1,4 +1,4 @@
-"""CLI: python -m isnad.cli <fetch|build|chains|groups|dating|gold|score|validate|report|export> ..."""
+"""CLI: python -m isnad.cli <fetch|build|chains|groups|dating|tree|gold|score|validate|report|export> ..."""
 
 import argparse
 
@@ -83,6 +83,13 @@ def main(argv=None) -> None:
     dp.add_argument("--dropped", default="data/dropped_links.parquet")
     dp.add_argument("--holdout", default="data/checks_dating.json")
     dp.add_argument("--folds", type=int, default=5)
+    tp = top.add_parser("tree", help="merged chain trees, common links, report dates")
+    tp.add_argument("--chains", default="data/chains.parquet")
+    tp.add_argument("--occurrences", default="data/occurrences.parquet")
+    tp.add_argument("--groups", default="data/groups.parquet")
+    tp.add_argument("--dates", default="data/rawi_dates_inferred.parquet")
+    tp.add_argument("--shawahid", default="data/shawahid.parquet")
+    tp.add_argument("--out-dir", default="data")
     ep = top.add_parser("export")
     ep.add_argument("--data-dir", default="data")
     ep.add_argument("--out", default="release")
@@ -123,6 +130,12 @@ def main(argv=None) -> None:
         for key in ("method", "method_bounded", "method_no_birth", "depth", "generation",
                     "generation_mean"):
             print(key, m[key])
+        return
+
+    if args.cmd == "tree":
+        from isnad import tree
+        tree.run_tree(args.chains, args.occurrences, args.groups, args.dates, args.out_dir,
+                      shawahid_path=args.shawahid)
         return
 
     if args.cmd == "chains":
