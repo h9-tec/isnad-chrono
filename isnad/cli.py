@@ -120,13 +120,15 @@ def main(argv=None) -> None:
     hp.add_argument("--push", action="store_true")
     hp.add_argument("--repo-id", default=None)
     hp.add_argument("--private", action="store_true")
-    hp.add_argument("--env-file", default="~/.config/isnad-chrono/.env",
-                    help="file with a HF_TOKEN=... line")
+    hp.add_argument("--env-file", default=None,
+                    help="file with a HF_TOKEN=... line (default: export_hf.ENV_FILE)")
     args = ap.parse_args(argv)
 
     if args.cmd == "export-hf":
         from isnad import export_hf
         token = None
+        if args.env_file is None:
+            args.env_file = export_hf.ENV_FILE
         if args.push:  # fail fast, before the build
             token = export_hf.read_token(args.env_file)
             if not token:

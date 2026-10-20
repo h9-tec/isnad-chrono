@@ -1,7 +1,7 @@
 import pandas as pd
 
 from isnad.cli import main
-from isnad.tree import clean_chains, common_links, k_branches, merge_tree, partial_common_links, report_dates
+from isnad.tree import REPORT_COLS, clean_chains, common_links, k_branches, merge_tree, partial_common_links, report_dates
 
 
 def test_merge_two_chains_shared_prefix():
@@ -85,6 +85,19 @@ def test_report_dates_uses_cl_interval():
     assert pd.isna(g3.root_id) and g3.n_chains == 0 and pd.isna(g3.cl_k3_date_hi)
 
 
+def test_report_dates_date_method_and_flags():
+    trees = {"g": merge_tree([[1, 2, 10], [1, 3, 11]]), "h": merge_tree([[5, 6, 7], [5, 6, 8]])}
+    groups = pd.DataFrame({"group_id": ["g", "h"], "complete": [True, False],
+                           "all_occurrences_have_chain": [False, True]})
+    dates = pd.DataFrame({"rawi_id": [1, 6], "death_lo": [0, 50], "death_hi": [300, 60],
+                          "method": ["prior_only", "known"]})
+    df = report_dates(groups, trees, dates).set_index("group_id")
+    assert df.loc["g", "cl_k2_date_method"] == "prior_only"
+    assert df.loc["h", "cl_k2_date_method"] == "known" and pd.isna(df.loc["h", "cl_k3_date_method"])
+    assert not df.loc["g", "all_occurrences_have_chain"] and df.loc["h", "all_occurrences_have_chain"]
+    assert list(df.reset_index().columns) == REPORT_COLS
+
+
 def test_report_dates_cl_without_date_row():
     trees = {"g": merge_tree([[1, 2, 10], [1, 3, 11]])}
     groups = pd.DataFrame({"group_id": ["g"], "complete": [False]})
@@ -131,6 +144,12 @@ def test_cli_tree(tmp_path, capsys):
     a1 = rd[(rd.group_id == "a") & (rd.root_id == 1)].iloc[0]
     assert a1.cl_k3_id == 2 and a1.cl_k3_date_lo == 80 and a1.n_chains == 3
     assert rd[rd.group_id == "b"].iloc[0].n_chains == 0
+    assert a1.cl_k3_date_method == "x"
+    # a: every occurrence has a joined chain; b: only an unjoined chain; c: no chain at all
+    flag = rd.groupby("group_id").all_occurrences_have_chain.first().to_dict()
+    assert flag == {"a": True, "b": False, "c": False}
+    assert rd.complete.tolist().count(False) == 1  # c, from groups.parquet
+    assert "all_occurrences_have_chain 1" in out
     tn = pd.read_parquet(tmp_path / "tree_nodes.parquet")
     assert set(tn.group_id) == {"a"}
     n2 = tn[tn.rawi_id == 2].iloc[0]

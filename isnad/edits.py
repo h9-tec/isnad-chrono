@@ -27,9 +27,11 @@ the change. ``status``:
 ``ambiguous`` (nullable bool) is set only for attributed/ambiguous rows. ``is_leaf_edit``: the
 node is the terminal (compiler) of one of the carrier chains, i.e. a single-witness variant.
 
-Edit rates count only status attributed/ambiguous rows: per depth d, ``n_transmissions`` counts
-(hadith, chain) links whose student is at depth d, summed over groups; ``n_edits`` counts edits at
-depth d. ``rate`` is edits per transmission, not a probability: one transmission can carry
+Edit rates count only status attributed/ambiguous rows: per depth d, ``n_edits`` counts edits at
+depth d, and ``n_transmissions`` counts (hadith, chain) links whose student is at depth d, summed
+over the groups that have at least one attributed/ambiguous row (the denominator is restricted
+to the same groups as the numerator; groups whose edits are all partial/no_chain/... add
+nothing). ``rate`` is edits per transmission, not a probability: one transmission can carry
 several edits, so it can exceed 1. ``n_edits_nonleaf``/``rate_nonleaf`` exclude leaf edits.
 Depth 0 (the Companion) is never a student: n_transmissions 0, rates null.
 
@@ -156,9 +158,13 @@ def edits_table(segments: pd.DataFrame, occurrences: pd.DataFrame,
 
 def edit_rates(edits: pd.DataFrame, chains: dict[str, list[list[int]]]) -> pd.DataFrame:
     """``chains``: group_id -> every parsed chain of the group's witnesses. Only rows with
-    status attributed/ambiguous count as edits."""
+    status attributed/ambiguous count as edits, and only groups with at least one such row
+    count transmissions."""
+    rated_groups = set(edits.loc[edits.status.isin(RATED), "group_id"])
     trans: Counter = Counter()
     for g, raw in chains.items():
+        if g not in rated_groups:
+            continue
         tree = merge_tree(raw)
         for c in tree.chains:
             d = tree.component(c[0]).depth

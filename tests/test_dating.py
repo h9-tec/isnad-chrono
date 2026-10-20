@@ -4,7 +4,7 @@ import numpy as np
 import pandas as pd
 
 from isnad.cli import main
-from isnad.dating import build_links, holdout, propagate
+from isnad.dating import build_links, chain_depth, holdout, propagate
 
 
 def nar(rows):
@@ -147,3 +147,40 @@ def test_cli_dating(tmp_path):
     assert row(out, 2).method == "inferred"
     assert "method" in json.loads((tmp_path / "h.json").read_text())
     assert pd.read_parquet(tmp_path / "d.parquet").empty
+
+
+
+def test_build_links_and_depth_skip_truncated_tail(tmp_path):
+    # Muslim 17428 parsed from the fixture, then each chain doubled (an isnad parsed twice and
+    # concatenated): the repeat truncates the chain, as tree.merge_tree does, so no link may come
+    # from the tail (no back edge compiler -> Companion) and depths stay those of the clean chain.
+    import shutil
+
+    from isnad.chains import chains_table
+    from tests.conftest import FIXTURES
+
+    (tmp_path / "hadith").mkdir()
+    shutil.copy(FIXTURES / "hadith_muslim_17428_repeat.html.gz",
+                tmp_path / "hadith" / "17428.html.gz")
+    ch = chains_table(tmp_path)
+    clean = build_links(ch)
+    n = ch.groupby(["hadith_id", "chain_no"]).position.transform("size")
+    doubled = pd.concat([ch, ch.assign(position=ch.position + n, term="عن")],
+                        ignore_index=True)
+    links = build_links(doubled)
+    pairs = set(zip(links.teacher_id, links.student_id))
+    assert pairs == set(zip(clean.teacher_id, clean.student_id)) and len(pairs) == 7
+    assert (6116, 3856) not in pairs
+    assert links.weight.tolist() == clean.weight.tolist()
+    assert links.cls.tolist() == clean.cls.tolist()
+    assert chain_depth(doubled) == chain_depth(ch) and chain_depth(doubled)[6116] == 5
+
+
+def test_build_links_collapses_consecutive_duplicate_keeping_adjacent_term():
+    ch = pd.DataFrame({"hadith_id": [1] * 4, "chain_no": [0] * 4, "position": [0, 1, 2, 3],
+                       "rawi_id": [10, 20, 20, 30], "term": ["عن", "عن", "حدثنا", None],
+                       "unjoined": [False] * 4, "source": ["html"] * 4})
+    links = build_links(ch).set_index(["teacher_id", "student_id"])
+    assert set(links.index) == {(10, 20), (20, 30)}
+    assert links.loc[(20, 30), "cls"] == "explicit"
+    assert chain_depth(ch) == {10: 0, 20: 1, 30: 2}

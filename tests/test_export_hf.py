@@ -135,6 +135,14 @@ def test_release_configs_and_denylist(tmp_path):
     assert checks["cl_k2_rate_multi"] == 1.0 and checks["cl_k3_rate_multi"] == 0.0
     assert checks["cl_k2_bounded_rate"] == 1.0  # synthetic intervals are 20 years wide
     assert "coverage_groups_cl_k2_dated_rate" not in checks
+    assert checks["release_version"] == "v0.1.1"
+    assert checks["cl_k2_prior_only_rate"] == 0.0 and checks["coverage_cl_k2_prior_only"] == 0
+    assert checks["all_occurrences_have_chain_rate"] == 1.0
+    assert checks["six_books_cached_rate"] == 2 / 3  # pages 2 and 3 of the 3 b-1 occurrences
+    grp = pd.read_parquet(out / "data" / "groups.parquet")
+    assert grp.all_occurrences_have_chain.tolist() == [True]
+    rd = pd.read_parquet(out / "data" / "report_dates.parquet")
+    assert list(rd.columns) == tree.REPORT_COLS and rd.cl_k2_date_method.tolist() == ["known"]
     row = pd.read_parquet(out / "data" / "checks.parquet").iloc[0]
     assert row["edits_no_chain_rate"] == 0.0 and row["cl_k2_rate_multi"] == 1.0
     assert not [k for k in checks if "per_fold" in k or "seconds" in k]
@@ -142,10 +150,42 @@ def test_release_configs_and_denylist(tmp_path):
     readme = (out / "README.md").read_text()
     for s in ("12.500", "0.979", "15.450", "v0.1", "config_name: narrators", "hdith.com",
               "35.500", "24.300", "14.800", "partial crawl", "2 hadith pages",
-              "among the 1 groups with at least 2 parsed chains", "mean error is worse"):
+              "among the 1 groups with at least 2 parsed chains",
+              "mean error is higher than the baseline's (35.5 vs 24.3)",
+              "bounded intervals the mean error is 14.8 years",
+              "The Six Books are not complete: 0.6667",
+              "Every k=2 common link has an inferred death interval",
+              "0 k=2 common links\n  (0.000) are dated by the prior alone", "v0.1 → v0.1.1"):
         assert s in readme, s
     assert "{{" not in readme and "n/a" not in readme
     assert man["chains"]["rows"] == 12
+
+
+def test_card_prose_follows_the_numbers():
+    better = export_hf.card_prose({
+        "six_books_cached_rate": 1.0, "dating_method_median_abs_error": 10.0,
+        "dating_depth_median_abs_error": 20.0, "dating_method_mean_abs_error": 15.0,
+        "dating_depth_mean_abs_error": 25.0, "coverage_n_cl_k2": 4,
+        "coverage_cl_k2_dated_rate": 0.5})
+    assert better["prose_six_books"].startswith("The Six Books are complete")
+    assert "mean error is lower than" in better["prose_dating"]
+    assert "tail" not in better["prose_dating"]
+    assert better["prose_cl_dates"].startswith("0.500 of the k=2 common links")
+    worse = export_hf.card_prose({"dating_method_median_abs_error": 30.0,
+                                  "dating_depth_median_abs_error": 20.0,
+                                  "dating_method_mean_abs_error": 40.0,
+                                  "dating_depth_mean_abs_error": 25.0})
+    assert "median error of propagation is higher than" in worse["prose_dating"]
+    assert "tail" in worse["prose_dating"]
+    assert "not measured" in worse["prose_six_books"]
+    assert worse["prose_cl_dates"] == "No k=2 common link was found."
+
+
+def test_long_terms_rejected():
+    export_hf.check_terms(pd.DataFrame({"term": ["حدثنا", None, "قرئ على فلان وأنا أسمع"]}), "c")
+    with pytest.raises(ValueError):
+        export_hf.check_terms(pd.DataFrame({"term": ["كان رسول الله يعرض الكتاب على جبريل"]}),
+                              "chains")
 
 
 def test_name_columns_denylisted():

@@ -23,6 +23,7 @@ import pandas as pd
 from isnad.constants import (A0, AGE_MAX, AGE_MIN, BIRTH_LO, DATE_K, HOLDOUT_FOLDS, MAX_ITER,
                              YEAR_HI, YEAR_LO)
 from isnad.score import classify_term
+from isnad.tree import clean_chains
 
 log = logging.getLogger(__name__)
 
@@ -35,15 +36,57 @@ DROPPED_COLS = ["teacher_id", "student_id", "weight", "cls", "reason", "pass", "
 
 # ---------------------------------------------------------------- inputs
 
+def clean_chain_rows(chains: pd.DataFrame) -> pd.DataFrame:
+    """Joined chains cleaned exactly as ``tree.merge_tree`` cleans them (``tree.clean_chains``):
+    consecutive duplicates collapse, a chain is truncated before its first non-consecutive
+    repeat, and a truncated chain shorter than 2 narrators is dropped. Positions are renumbered
+    0.. along the cleaned chain. A collapsed duplicate keeps the term of its last row (the one
+    adjacent to the next narrator). Columns: hadith_id, chain_no, position, rawi_id, term."""
+    c = chains[~chains["unjoined"].astype(bool)]
+    c = c.sort_values(["hadith_id", "chain_no", "position"])
+    cols = ["hadith_id", "chain_no", "position", "rawi_id", "term"]
+    if c.empty:
+        return pd.DataFrame({k: [] for k in cols})
+    h = c["hadith_id"].to_numpy()
+    n = c["chain_no"].to_numpy()
+    ids = c["rawi_id"].to_numpy()
+    terms = c["term"].to_numpy(object)
+    starts = np.flatnonzero(np.r_[True, (h[1:] != h[:-1]) | (n[1:] != n[:-1])])
+    ends = np.r_[starts[1:], len(c)]
+    out_h, out_n, out_p, out_r, out_t = [], [], [], [], []
+    for a, b in zip(starts, ends):
+        kept = clean_chains([ids[a:b]])[0]
+        if not kept:
+            continue
+        chain = kept[0]
+        t_out: list = []
+        prev = None
+        for r, t in zip(ids[a:b], terms[a:b]):
+            if t_out and r == prev:
+                t_out[-1] = t
+                continue
+            if len(t_out) == len(chain):
+                break
+            t_out.append(t)
+            prev = r
+        out_h += [h[a]] * len(chain)
+        out_n += [n[a]] * len(chain)
+        out_p += range(len(chain))
+        out_r += chain
+        out_t += t_out
+    return pd.DataFrame({"hadith_id": out_h, "chain_no": out_n, "position": out_p,
+                         "rawi_id": out_r, "term": out_t})
+
+
 def build_links(chains: pd.DataFrame) -> pd.DataFrame:
     """Unique teacher->student links from chains: weight = count, cls = majority term class.
 
-    Position p is the teacher of position p+1 within one (hadith_id, chain_no); the term sits
-    on the teacher row. Chains flagged unjoined are dropped. Unclassified terms count as
-    ambiguous (no audition claim); explicit wins a tie.
+    Chains flagged unjoined are dropped and the rest are cleaned as ``merge_tree`` cleans them
+    (``clean_chain_rows``: no link comes from the tail after a repeated narrator). Position p is
+    the teacher of position p+1 within one (hadith_id, chain_no); the term sits on the teacher
+    row. Unclassified terms count as ambiguous (no audition claim); explicit wins a tie.
     """
-    c = chains[~chains["unjoined"].astype(bool)]
-    c = c.sort_values(["hadith_id", "chain_no", "position"])
+    c = clean_chain_rows(chains)
     nxt = c.shift(-1)
     same = ((nxt["hadith_id"] == c["hadith_id"]) & (nxt["chain_no"] == c["chain_no"])
             & (nxt["position"] == c["position"] + 1))
@@ -61,8 +104,8 @@ def build_links(chains: pd.DataFrame) -> pd.DataFrame:
 
 
 def chain_depth(chains: pd.DataFrame) -> dict:
-    """rawi_id -> mean chain position over joined chains (0 = earliest)."""
-    c = chains[~chains["unjoined"].astype(bool)]
+    """rawi_id -> mean chain position over joined, cleaned chains (0 = earliest)."""
+    c = clean_chain_rows(chains)
     return c.groupby("rawi_id")["position"].mean().to_dict()
 
 

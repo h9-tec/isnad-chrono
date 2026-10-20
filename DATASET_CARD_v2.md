@@ -28,17 +28,27 @@ critic statement is redistributed.
   group ids are hdith.com takhrij group slugs). Years are Hijri.
 - License of the derived numbers: CC-BY-4.0 with attribution to hdith.com as the data source.
   The license of hdith.com itself is unstated; the text stays on the site.
-- Version: {{version}}. Groups whose occurrences are not all cached carry `complete = false`; a
-  later rebuild after the full crawl will update them.
+- Version: {{version}}. `complete` on a group means every occurrence page was cached when the
+  `groups` stage ran; `all_occurrences_have_chain` means every occurrence also has a parsed
+  chain. A later rebuild after the full crawl will update both.
+
+## Changelog
+
+- v0.1 → v0.1.1: dating cleans repeated-narrator chains (as the trees do), edit-rate denominator
+  restricted to the groups that have rated edits, `complete`-flag wording plus the new
+  `all_occurrences_have_chain` flag, common-link date method (`cl_k{k}_date_method`).
 
 ## Release {{version}}: partial crawl
 
 This release was built from a partial crawl of hdith.com: {{n_hadith_pages_cached}} hadith pages
 were cached when the release was built (the chain and group stages ran on a slightly earlier
-snapshot of the same crawl while it was still growing). The Six Books are complete (a handful of
-pages aside); the other collections are partial or not yet crawled. As a result:
+snapshot of the same crawl while it was still growing). {{prose_six_books}} The other collections
+are partial or not yet crawled. As a result:
 
-- complete groups (every occurrence cached): {{groups_complete_rate}} of {{coverage_n_groups}} groups;
+- complete groups (every occurrence page cached when the `groups` stage ran):
+  {{groups_complete_rate}} of {{coverage_n_groups}} groups;
+- groups whose every occurrence has a parsed chain (`all_occurrences_have_chain`):
+  {{all_occurrences_have_chain_rate}};
 - occurrences with a parsed chain: {{occurrence_chain_rate}};
 - edit rows with status `no_chain` (no carrier has a parsed chain, mostly carriers in collections
   not yet crawled): {{edits_no_chain_rate}}.
@@ -75,21 +85,27 @@ hashes), `shawahid` (corroborating reports by other Companions, ids only), `shaw
   formula by which the next narrator received from this one, e.g. حدثنا, عن), `unjoined` (an earlier tahwil segment that could
   not be joined to the final chain), `source` (`html`, `flat`, `html+flat`).
 - `groups`: `group_id`, `n_entries`, `n_chains` (the site's counts), `books`, `n_occurrences`,
-  `complete` (every occurrence page was cached when the release was built).
+  `complete` (every occurrence page was cached when the `groups` stage ran),
+  `all_occurrences_have_chain` (every occurrence hadith has a parsed, joined chain in `chains`;
+  computed by the tree stage).
 - `occurrences`: `group_id`, `hadith_id`, `book_slug`, `numbering` (the hadith number in its book).
 - `tree_nodes`: `group_id`, `root_id` (the Companion of the component), `rawi_id`, `depth` (BFS
   distance from the root), `k_branches` (children whose subtree reaches a compiler),
   `n_descendant_chains`, `is_cl_k2`, `is_cl_k3` (common link), `is_pcl_k2`, `is_pcl_k3` (partial
   common link).
 - `report_dates`: `group_id`, `root_id`, for k in {2, 3}: `cl_k{k}_id`, `cl_k{k}_date_lo`,
-  `cl_k{k}_date_hi` (death interval of the common link = the report date), `cl_k{k}_all_chains`
-  (every chain passes through it); `n_chains`, `n_compilers`, `complete`.
+  `cl_k{k}_date_hi` (death interval of the common link = the report date), `cl_k{k}_date_method`
+  (the common link's dating `method`: `known`, `inferred`, or `prior_only` = no chain constraint
+  reached it, so the date is the prior alone), `cl_k{k}_all_chains` (every chain passes through
+  it); `n_chains`, `n_compilers`, `complete`, `all_occurrences_have_chain` (copied from the group).
 - `edits`: `group_id`, `seg_no`, `introduced_by_rawi_id`, `generation_depth`, `edit_type` (`sub`,
   `ins`, `del`), `status` (`attributed`, `ambiguous`, `partial`, `cross_root`, `no_chain`,
   `no_common_node`), `ambiguous`, `is_leaf_edit` (single-witness variant at the compiler),
   `has_tahwil_carrier`, `n_carriers`, `n_carriers_with_chain`, `n_base_carriers`.
 - `edit_rates`: `depth`, `n_transmissions`, `n_edits`, `rate`, `n_edits_nonleaf`, `rate_nonleaf`,
-  from `attributed` and `ambiguous` rows only. Depth 0 is the Companion: edits attributed there
+  from `attributed` and `ambiguous` rows only. The denominator is restricted the same way as the
+  numerator: `n_transmissions` counts the chain links of only those groups that have at least one
+  `attributed` or `ambiguous` row. Depth 0 is the Companion: edits attributed there
   have no transmission into the node, so `n_transmissions` is 0 and the rates are null.
 - `shawahid`: `group_id`, `hadith_ids` (the corroborating reports). {{shawahid_note}} For the
   Companion of each corroborating report use `shawahid_companions` (`group_id`, `hadith_id`,
@@ -98,23 +114,33 @@ hashes), `shawahid` (corroborating reports by other Companions, ids only), `shaw
 - `edge_scores`: as in v1 (`teacher_id`, `student_id`, `hadith_id`, `position`, `term`, `p_meet`,
   evidence flags, `verdict`).
 - `checks`: flattened keys, prefixed `alignment_`, `sanity_`, `coverage_`, `dating_`, plus the
-  unprefixed release-status keys `n_hadith_pages_cached`, `groups_complete_rate`,
-  `occurrence_chain_rate`, `edits_no_chain_rate`, `cl_k2_rate_multi`, `cl_k3_rate_multi`,
-  `cl_k2_bounded_rate`.
+  unprefixed release-status keys `n_hadith_pages_cached`, `six_books_cached_rate`,
+  `groups_complete_rate`, `all_occurrences_have_chain_rate`, `occurrence_chain_rate`,
+  `edits_no_chain_rate`, `cl_k2_rate_multi`, `cl_k3_rate_multi`, `cl_k2_bounded_rate`,
+  `cl_k2_prior_only_rate`.
 
 ## Method
 
 1. Chains. Parsed from the annotated isnad HTML of each hadith page (narrator spans and formula
-   spans in reading order). The chain is split at every ح (tahwil) and at و-formulas; each earlier
-   segment is joined to the final chain at its last shared narrator, giving one chain per path to
-   the compiler. Narrators joined by و without a formula are parallel and fork the chain.
+   spans in reading order). The chain is split at every ح (tahwil), at و-formulas (وحدثنا,
+   وأخبرنا, ...) and at "وقال NAME:" restarts that name an earlier narrator (the new segment
+   replays the path down to that narrator); each earlier segment is joined to the final chain at
+   its last shared narrator, giving one chain per path to the compiler. A join phrase (كلاهما,
+   كلهم, جميعا, ثلاثتهم) before "عن X" makes every open segment continue through X. Two adjacent
+   narrator spans are parallel (and fork the chain) only when joined by و; adjacent spans with no
+   و are linked in sequence, with the connective in the gap (أن, عن, ...) as the term. Chains
+   that stop short of the flat isnad's earliest narrators are completed from it.
 2. Groups. Taken from the site's takhrij group of each page: occurrences, and the site's variant
    segments (base text plus substitutions with their carrier hadiths), kept as hashes.
 3. Narrator dating. Variables birth and death per narrator; each link student <- teacher gives
    birth(student) + 8 <= death(teacher); lifespans are bounded to 20..100 years; recorded dates
-   enter as tight intervals. Difference constraints are propagated over the narrator graph;
-   negative cycles are attributed to their weakest link (fewest chains; an عن-class link before
-   a حدثنا-class one), which is dropped (listed in `dropped_links`). Accuracy is measured by a {{dating_folds}}-fold hold-out of recorded death years.
+   enter as tight intervals. Chains are cleaned as for the trees (a chain is cut before its first
+   repeated narrator) before the links are read. Difference constraints are propagated over the
+   narrator graph. When a narrator's interval empties in a round, one link is dropped for it
+   (listed in `dropped_links`): among the links that bound it that round, a link whose removal
+   alone restores feasibility is preferred, then an ambiguous-class link (عن, أن, ...) before an
+   explicit one (حدثنا, ...), then the lowest weight (fewest chains). Accuracy is measured by a
+   {{dating_folds}}-fold hold-out of recorded death years.
 4. Trees and common links. All chains of a group's occurrences are merged into one graph per root
    Companion. The common link under k is the shallowest node with at least k branches reaching a
    compiler whose subtree contains every compiler; other nodes with at least k branches are partial
@@ -123,7 +149,9 @@ hashes), `shawahid` (corroborating reports by other Companions, ids only), `shaw
    and is deepest in the tree introduced the change; `ambiguous` when that narrator also transmitted
    the base text. Rows with status `partial` (some carriers without a parsed chain), `cross_root`,
    `no_chain` or `no_common_node` are excluded from the edit rates, which count only `attributed`
-   and `ambiguous` rows.
+   and `ambiguous` rows. An edit's tree is built from all the group's witnesses, including
+   substitution carriers that are missing from the group's occurrence list (such a carrier is
+   never counted as a base carrier).
 
 ## Checks
 
@@ -149,10 +177,7 @@ Computed when the release is built and shipped in the `checks` config and `check
   - baseline by chain depth: {{dating_depth_median_abs_error}} / {{dating_depth_mean_abs_error}} / {{dating_depth_coverage_90}}
   - baseline by generation mean: {{dating_generation_mean_median_abs_error}} / {{dating_generation_mean_mean_abs_error}} / {{dating_generation_mean_coverage_90}}
 
-  The median error of propagation beats the depth baseline, but its mean error is worse than the
-  baseline: a heavy tail of large errors comes from narrators whose inferred interval is unbounded
-  (no constraint closes it). Restricted to bounded intervals, the mean error drops to
-  {{dating_method_bounded_mean_abs_error}} years.
+  {{prose_dating}}
 - Dropped links (negative cycles): {{sanity_n_dropped_links}}.
 - Tree sanity: compilers that are leaves {{sanity_compiler_leaf_rate}} ({{sanity_n_compilers_nonleaf}} of
   {{sanity_n_compilers}} compilers also narrate inside another chain of the same component); roots
@@ -165,9 +190,11 @@ Computed when the release is built and shipped in the `checks` config and `check
 - Common links: among the {{coverage_n_groups_multi_chain}} groups with at least 2 parsed chains,
   {{cl_k2_rate_multi}} have a k=2 common link and {{cl_k3_rate_multi}} a k=3 one; among all
   {{coverage_n_groups}} groups (including those with 0 or 1 chain) the rates are
-  {{coverage_groups_cl_k2_rate}} and {{coverage_groups_cl_k3_rate}}. Every common link has an
-  inferred death interval; {{cl_k2_bounded_rate}} of the k=2 common links have a bounded one (width
-  ≤ {{bounded_width}} years).
+  {{coverage_groups_cl_k2_rate}} and {{coverage_groups_cl_k3_rate}}. {{prose_cl_dates}};
+  {{cl_k2_bounded_rate}} of the {{coverage_n_cl_k2}} k=2 common links have a bounded one (width
+  ≤ {{bounded_width}} years). {{coverage_cl_k2_prior_only}} k=2 common links
+  ({{cl_k2_prior_only_rate}}) are dated by the prior alone (`cl_k2_date_method = prior_only`: no
+  chain constraint reached the narrator); {{prose_cl_k3_prior_only}}. Filter on `cl_k{k}_date_method` before using report dates.
 
 ## Limitations
 
@@ -185,6 +212,8 @@ Computed when the release is built and shipped in the `checks` config and `check
   (`has_tahwil_carrier`) for sensitivity analysis. Edit rates are edits per transmission, not
   probabilities.
 - Chronology and common-link results are not authenticity verdicts.
+- The spec's `earliest_text_hash` of `report_dates` is deferred to v0.2 (not computed in v0.1 or
+  v0.1.1).
 - Text hashes hide the text but are not a secrecy mechanism: a short segment (one or two words)
   can be confirmed by hashing candidate wordings.
 

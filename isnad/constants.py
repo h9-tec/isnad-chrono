@@ -3,7 +3,9 @@
 A0 = 8  # minimum age (lunar years) at which a student can have heard from the teacher
 MU_AGE = 68.0  # mean lifespan, used to impute missing birth/death
 SD_AGE = 14.0
-AGE_MIN = 20  # documented truncation bounds of the lifespan prior (closed form ignores them in v1)
+# Lifespan bounds (years). v1 edge scoring (isnad.score) does not apply them; v2 dating
+# (isnad.dating) enforces AGE_MIN <= death - birth <= AGE_MAX as hard constraints.
+AGE_MIN = 20
 AGE_MAX = 100
 GAP_THRESHOLD = 0.05
 SUSPECT_THRESHOLD = 0.2

@@ -17,7 +17,6 @@ from collections import Counter
 from dataclasses import dataclass, field
 from pathlib import Path
 
-import pandas as pd
 import pyarrow as pa
 import pyarrow.parquet as pq
 
@@ -159,7 +158,7 @@ class _Sink:
         self.cached, self.stats = cached, Counter()
         self.seen: dict[str, tuple[str, int]] = {}  # group_id -> (signature, n segments)
         self.text_seen: set[str] = set()
-        self.w = {k: _Chunked(out_dir / (f"text/segments_text.parquet" if k == "text"
+        self.w = {k: _Chunked(out_dir / ("text/segments_text.parquet" if k == "text"
                                          else f"{k}.parquet"), v, chunk)
                   for k, v in SCHEMAS.items()}
 

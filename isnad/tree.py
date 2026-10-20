@@ -12,7 +12,12 @@ root and analysed on its own.
   included) contains every terminal of the component; ties on depth go to the node carried by
   more chains, then the smaller rawi_id. Partial common links: every other node with
   ``k_branches >= k``.
-* report date: the common link's ``death_lo/death_hi`` from the inferred narrator dates.
+* report date: the common link's ``death_lo/death_hi`` from the inferred narrator dates;
+  ``cl_kN_date_method`` is that narrator's dating ``method`` (``prior_only`` = no chain
+  constraint reached it, so the interval is the prior alone).
+* ``complete`` (from ``groups``): every occurrence page was cached when the groups stage ran.
+  ``all_occurrences_have_chain``: every occurrence hadith has a parsed (joined, cleaned) chain
+  in chains.parquet, computed here.
 * k_branches counts distinct pupils (children reaching a terminal), not distinct compilers;
   ``n_compilers`` is reported alongside; ``cl_kN_all_chains`` gives the strict reading (every
   chain of the component passes through the common link).
@@ -52,9 +57,6 @@ def clean_chain(chain) -> tuple[tuple[int, ...], bool]:
         out.append(r)
         seen.add(r)
     return tuple(out), False
-
-
-_clean = clean_chain  # deprecated alias, kept for one release
 
 
 @dataclass
@@ -209,29 +211,35 @@ def analyse(group_id: str, tree: Tree) -> tuple[list[dict], list[dict]]:
     return nodes, reports
 
 
-_REPORT_COLS = ["group_id", "root_id"] + [
+REPORT_COLS = ["group_id", "root_id"] + [
     c for k in K_CL for c in (f"cl_k{k}_id", f"cl_k{k}_date_lo", f"cl_k{k}_date_hi",
-                              f"cl_k{k}_all_chains")
-] + ["n_chains", "n_compilers", "complete"]
+                              f"cl_k{k}_date_method", f"cl_k{k}_all_chains")
+] + ["n_chains", "n_compilers", "complete", "all_occurrences_have_chain"]
+_GROUP_FLAGS = ("complete", "all_occurrences_have_chain")  # carried over from ``groups``
+_ANALYSED_COLS = [c for c in REPORT_COLS if "date" not in c and c not in _GROUP_FLAGS]
 
 
 def _attach_dates(rep: pd.DataFrame, groups: pd.DataFrame, dates: pd.DataFrame) -> pd.DataFrame:
     lo = dict(zip(dates.rawi_id, dates.death_lo))
     hi = dict(zip(dates.rawi_id, dates.death_hi))
+    meth = dict(zip(dates.rawi_id, dates["method"])) if "method" in dates else {}
     for k in K_CL:
         ids = rep[f"cl_k{k}_id"]
         rep[f"cl_k{k}_date_lo"] = [float(lo.get(i, float("nan"))) if pd.notna(i) else float("nan")
                                    for i in ids]
         rep[f"cl_k{k}_date_hi"] = [float(hi.get(i, float("nan"))) if pd.notna(i) else float("nan")
                                    for i in ids]
+        rep[f"cl_k{k}_date_method"] = pd.array(
+            [meth.get(i) if pd.notna(i) else None for i in ids], dtype="string")
         rep[f"cl_k{k}_id"] = ids.astype("Int64")
         rep[f"cl_k{k}_all_chains"] = pd.array(list(rep[f"cl_k{k}_all_chains"]), dtype="boolean")
     rep["root_id"] = rep["root_id"].astype("Int64")
-    complete = dict(zip(groups.group_id, groups.complete)) if "complete" in groups else {}
-    rep["complete"] = pd.array([complete.get(g) for g in rep.group_id], dtype="boolean")
+    for col in _GROUP_FLAGS:
+        flag = dict(zip(groups.group_id, groups[col])) if col in groups else {}
+        rep[col] = pd.array([flag.get(g) for g in rep.group_id], dtype="boolean")
     rep["n_chains"] = rep["n_chains"].astype("int64")
     rep["n_compilers"] = rep["n_compilers"].astype("int64")
-    return rep[_REPORT_COLS]
+    return rep[REPORT_COLS]
 
 
 def _empty_report(group_id: str) -> dict:
@@ -242,7 +250,11 @@ def _empty_report(group_id: str) -> dict:
 
 def report_dates(groups: pd.DataFrame, trees: dict[str, Tree], dates: pd.DataFrame
                  ) -> pd.DataFrame:
-    """One row per (group, root); a group without chains gets one all-null row, n_chains 0."""
+    """One row per (group, root); a group without chains gets one all-null row, n_chains 0.
+
+    ``groups`` carries ``group_id`` and optionally ``complete`` / ``all_occurrences_have_chain``
+    (copied onto every row of the group); ``dates`` carries ``rawi_id``, ``death_lo``,
+    ``death_hi`` and optionally ``method``."""
     rows: list[dict] = []
     for g in groups.group_id:
         t = trees.get(g)
@@ -250,9 +262,7 @@ def report_dates(groups: pd.DataFrame, trees: dict[str, Tree], dates: pd.DataFra
             rows.append(_empty_report(g))
         else:
             rows += analyse(g, t)[1]
-    return _attach_dates(pd.DataFrame(rows, columns=[c for c in _REPORT_COLS
-                                                      if "date" not in c and c != "complete"]),
-                         groups, dates)
+    return _attach_dates(pd.DataFrame(rows, columns=_ANALYSED_COLS), groups, dates)
 
 
 def load_chains(path: str | Path) -> dict[int, list[list[int]]]:
@@ -270,7 +280,7 @@ def load_chains(path: str | Path) -> dict[int, list[list[int]]]:
     return out
 
 
-_NODE_COLS = ["group_id", "root_id", "rawi_id", "depth", "k_branches", "n_descendant_chains"] + [
+NODE_COLS = ["group_id", "root_id", "rawi_id", "depth", "k_branches", "n_descendant_chains"] + [
     f"is_cl_k{k}" for k in K_CL] + [f"is_pcl_k{k}" for k in K_CL]
 
 
@@ -285,40 +295,43 @@ def run_tree(chains_path, occurrences_path, groups_path, dates_path, out_dir,
     if extra:
         groups = pd.concat([groups, pd.DataFrame({"group_id": extra, "complete": None})],
                            ignore_index=True)
-    dates = (pd.read_parquet(dates_path, columns=["rawi_id", "death_lo", "death_hi"])
+    dates = (pd.read_parquet(dates_path, columns=["rawi_id", "death_lo", "death_hi", "method"])
              if dates_path and Path(dates_path).exists()
-             else pd.DataFrame({"rawi_id": [], "death_lo": [], "death_hi": []}))
+             else pd.DataFrame({"rawi_id": [], "death_lo": [], "death_hi": [], "method": []}))
     if dates.empty:
         log.warning("no narrator dates at %s: report dates will be null", dates_path)
 
     hids = occ.groupby("group_id").hadith_id.agg(lambda s: sorted(set(s)))
+    has_chain = {h for h, chs in chains.items() if clean_chains(chs)[0]}
+    groups["all_occurrences_have_chain"] = [
+        bool(hids.get(g)) and all(int(h) in has_chain for h in hids.get(g, []))
+        for g in groups.group_id]
     node_rows: list[dict] = []
-    rep_rows: list[dict] = []
+    trees: dict[str, Tree] = {}
     stats = {"groups": 0, "ge2_chains": 0, "k2_cl": 0, "k3_cl": 0, "multi_root": 0,
              "no_chains": 0, "chains_truncated_repeat": 0}
     for g in groups.group_id:
         stats["groups"] += 1
         t = merge_tree([ch for h in hids.get(g, []) for ch in chains.get(h, [])])
+        trees[g] = t
         stats["chains_truncated_repeat"] += t.n_truncated
         if not t.roots:
             stats["no_chains"] += 1
-            rep_rows.append(_empty_report(g))
             continue
-        n, r = analyse(g, t)
-        node_rows += n
-        rep_rows += r
+        node_rows += analyse(g, t)[0]
         stats["ge2_chains"] += len(t.chains) >= 2
-        stats["k2_cl"] += any(x["cl_k2_id"] is not None for x in r)
-        stats["k3_cl"] += any(x["cl_k3_id"] is not None for x in r)
         stats["multi_root"] += len(t.roots) > 1
 
-    nodes = pd.DataFrame(node_rows, columns=_NODE_COLS)
+    nodes = pd.DataFrame(node_rows, columns=NODE_COLS)
     nodes.to_parquet(out / "tree_nodes.parquet", index=False)
-    rep = _attach_dates(pd.DataFrame(rep_rows, columns=[c for c in _REPORT_COLS if "date" not in c
-                                                         and c != "complete"]), groups, dates)
+    rep = report_dates(groups, trees, dates)
     rep.to_parquet(out / "report_dates.parquet", index=False)
+    for k in K_CL:
+        stats[f"k{k}_cl"] = int(rep.loc[rep[f"cl_k{k}_id"].notna(), "group_id"].nunique())
     stats["report_rows"] = len(rep)
     stats["k2_dated"] = int(rep.cl_k2_date_lo.notna().sum())
+    stats["k2_prior_only"] = int((rep.cl_k2_date_method == "prior_only").sum())
+    stats["all_occurrences_have_chain"] = int(groups.all_occurrences_have_chain.sum())
 
     if shawahid_path and Path(shawahid_path).exists():
         sh = pd.read_parquet(shawahid_path, columns=["group_id", "hadith_ids"])

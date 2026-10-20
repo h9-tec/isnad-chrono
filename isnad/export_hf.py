@@ -34,12 +34,14 @@ from isnad.groups import SCHEMAS
 
 log = logging.getLogger(__name__)
 
-VERSION = "v0.1"
+VERSION = "v0.1.1"
 REPO_ID = "HeshamHaroon/isnad-chrono"
 ENV_FILE = "~/.config/isnad-chrono/.env"
 CARD = Path(__file__).resolve().parent.parent / "DATASET_CARD_v2.md"
 ALIGN_SLACK = 3  # an agreeing opcode spans at most the substitution length + this many tokens
 MAX_STR_LEN = 96  # longest real transmission formula is 65 chars
+MAX_TERM_WORDS = 6  # a `term` (transmission formula) longer than this is text, not a formula
+SIX_BOOKS = frozenset(f"b-{i}" for i in range(1, 7))
 Manifest = dict
 
 INPUTS = {
@@ -74,8 +76,8 @@ _TABLES = {
     "chains": ("chains", chains_mod.COLUMNS),
     "groups": ("groups", SCHEMAS["groups"].names),
     "occurrences": ("occurrences", SCHEMAS["occurrences"].names),
-    "tree_nodes": ("tree_nodes", tree._NODE_COLS),
-    "report_dates": ("report_dates", tree._REPORT_COLS),
+    "tree_nodes": ("tree_nodes", tree.NODE_COLS),
+    "report_dates": ("report_dates", tree.REPORT_COLS),
     "edits": ("edits", edits.EDIT_COLS),
     "edge_scores": ("edge_scores", EDGE_SCORE_COLS),
 }
@@ -335,7 +337,15 @@ def coverage(tables: dict[str, pd.DataFrame], chains: pd.DataFrame) -> dict:
         width = cl[f"cl_k{k}_date_hi"] - cl[f"cl_k{k}_date_lo"]
         out[f"cl_k{k}_bounded_rate"] = (float((width <= dating.BOUNDED_WIDTH).mean())
                                         if len(cl) else None)
+        out[f"n_cl_k{k}"] = int(len(cl))
+        out[f"cl_k{k}_dated_rate"] = (float(cl[f"cl_k{k}_date_lo"].notna().mean())
+                                      if len(cl) else None)
+        prior = int((cl[f"cl_k{k}_date_method"] == "prior_only").sum())
+        out[f"cl_k{k}_prior_only"] = prior
+        out[f"cl_k{k}_prior_only_rate"] = prior / len(cl) if len(cl) else None
     out["groups_complete_rate"] = float(g.complete.mean()) if len(g) else None
+    flag = per_group.all_occurrences_have_chain.first()
+    out["all_occurrences_have_chain_rate"] = float(flag.astype(bool).mean()) if len(flag) else None
     out["occurrence_chain_rate"] = (len(occ_h & with_chain) / len(occ_h)) if occ_h else None
     out["n_narrators"] = int(len(nar))
     out |= {f"narrators_method_{m}": int(c) for m, c in nar["method"].value_counts().items()}
@@ -350,16 +360,74 @@ def coverage(tables: dict[str, pd.DataFrame], chains: pd.DataFrame) -> dict:
 
 
 # coverage keys also written without the "coverage_" prefix (headline release status)
-STATUS_KEYS = ("groups_complete_rate", "occurrence_chain_rate", "edits_no_chain_rate",
-               "cl_k2_rate_multi", "cl_k3_rate_multi", "cl_k2_bounded_rate")
+STATUS_KEYS = ("groups_complete_rate", "all_occurrences_have_chain_rate", "occurrence_chain_rate",
+               "edits_no_chain_rate", "cl_k2_rate_multi", "cl_k3_rate_multi",
+               "cl_k2_bounded_rate", "cl_k2_prior_only_rate")
 
 
-def count_cached_pages(cache_root: str | Path | None) -> int | None:
-    """Cached hadith pages at build time (read-only directory listing)."""
+def cached_page_ids(cache_root: str | Path | None) -> set[str] | None:
+    """Ids (file stems) of the cached hadith pages at build time (read-only listing)."""
     if cache_root is None or not (Path(cache_root) / "hadith").is_dir():
         return None
     from isnad.build import _pages
-    return len(_pages(cache_root, "hadith"))
+    return {p.name.removesuffix(".gz").removesuffix(".html") for p in _pages(cache_root, "hadith")}
+
+
+def six_books_cached_rate(occurrences: pd.DataFrame, cached: set[str] | None) -> float | None:
+    """Share of the Six Books' (b-1 .. b-6) group occurrences whose page is cached."""
+    if cached is None:
+        return None
+    h = {str(int(x)) for x in occurrences.loc[occurrences.book_slug.isin(SIX_BOOKS), "hadith_id"]}
+    return len(h & cached) / len(h) if h else None
+
+
+def _f(v, digits: int = 1) -> str:
+    return "n/a" if v is None else f"{v:.{digits}f}"
+
+
+def card_prose(checks: dict) -> dict:
+    """Card sentences whose wording depends on the numbers, chosen at build time so a rebuild
+    cannot leave a claim the checks contradict."""
+    out = {}
+    sb = checks.get("six_books_cached_rate")
+    if sb is None:
+        out["prose_six_books"] = "Coverage of the Six Books was not measured for this build."
+    elif sb >= 0.999:
+        out["prose_six_books"] = (f"The Six Books are complete ({sb:.4f} of their takhrij-group "
+                                  "occurrences cached).")
+    else:
+        out["prose_six_books"] = (f"The Six Books are not complete: {sb:.4f} of their "
+                                  "takhrij-group occurrences are cached.")
+    m, md = checks.get("dating_method_median_abs_error"), checks.get("dating_depth_median_abs_error")
+    mn, mnd = checks.get("dating_method_mean_abs_error"), checks.get("dating_depth_mean_abs_error")
+    bmn = checks.get("dating_method_bounded_mean_abs_error")
+    if None in (m, md, mn, mnd):
+        out["prose_dating"] = "The propagation and baseline errors are not all available."
+    else:
+        def cmp(a, b):
+            return "lower than" if a < b else ("equal to" if a == b else "higher than")
+        txt = (f"The median error of propagation is {cmp(m, md)} the depth baseline's "
+               f"({_f(m)} vs {_f(md)} years) and its mean error is {cmp(mn, mnd)} the "
+               f"baseline's ({_f(mn)} vs {_f(mnd)}).")
+        if mn > mnd:
+            txt += (" The mean is pulled up by a tail of large errors from narrators whose "
+                    "inferred interval is unbounded (no constraint closes it)")
+            txt += (f"; restricted to bounded intervals the mean error is {_f(bmn)} years."
+                    if bmn is not None else ".")
+        out["prose_dating"] = txt
+    n2, dated = checks.get("coverage_n_cl_k2"), checks.get("coverage_cl_k2_dated_rate")
+    if not n2:
+        out["prose_cl_dates"] = "No k=2 common link was found."
+    else:
+        head = ("Every k=2 common link has an inferred death interval"
+                if dated == 1.0 else
+                f"{_f(dated, 3)} of the k=2 common links have an inferred death interval")
+        out["prose_cl_dates"] = head
+    n3, r3 = checks.get("coverage_n_cl_k3"), checks.get("coverage_cl_k3_prior_only_rate")
+    out["prose_cl_k3_prior_only"] = (
+        f"for k=3, {checks.get('coverage_cl_k3_prior_only')} of {n3} ({r3:.3f})"
+        if n3 and r3 is not None else "there is no k=3 common link")
+    return out
 
 
 # ---------------------------------------------------------------- release
@@ -396,6 +464,16 @@ def check_strings(df: pd.DataFrame, label: str, max_len: int = MAX_STR_LEN) -> N
             ln = s.map(_max_str)
             if len(ln) and ln.max() > max_len:
                 raise ValueError(f"{label}.{c}: string cell longer than {max_len} chars")
+
+
+def check_terms(df: pd.DataFrame, label: str, max_words: int = MAX_TERM_WORDS) -> None:
+    """Reject a ``term`` cell of more than max_words words (a formula is a few words; more is
+    text leaking through the formula column)."""
+    if "term" not in df.columns:
+        return
+    n = df["term"].map(lambda t: len(t.split()) if isinstance(t, str) else 0)
+    if len(n) and n.max() > max_words:
+        raise ValueError(f"{label}.term: cell longer than {max_words} words")
 
 
 def _select(df: pd.DataFrame, cols: list[str] | None, label: str) -> pd.DataFrame:
@@ -487,6 +565,12 @@ def build_release(data_dir: str | Path = "data", out: str | Path = "release_hf",
         else:
             log.warning("optional config %s skipped: %s missing", name, p[key])
 
+    rd_flag = (tables["report_dates"].groupby("group_id").all_occurrences_have_chain.first()
+               .rename("all_occurrences_have_chain"))
+    tables["groups"] = tables["groups"].merge(rd_flag, left_on="group_id", right_index=True,
+                                              how="left")
+    tables["groups"]["all_occurrences_have_chain"] = pd.array(
+        list(tables["groups"].all_occurrences_have_chain), dtype="boolean")
     chains = tables["chains"]
     trees = build_trees(tree.load_chains(p["chains"]), tables["occurrences"])
     sanity = sanity_checks(trees, chains, tables.get("dropped_links"), read("dates"))
@@ -508,11 +592,13 @@ def build_release(data_dir: str | Path = "data", out: str | Path = "release_hf",
     else:
         log.warning("no local text store at %s: alignment check skipped", p["text"])
         align = {"agreement": None}
+    cached = cached_page_ids(cache_root)
     dating_m = json.loads(p["checks_dating"].read_text()) if p["checks_dating"].exists() else {}
     checks = {"release_version": VERSION, **flatten(align, "alignment_"),
               **flatten(sanity, "sanity_"), **flatten(cov, "coverage_"),
               **{k: cov[k] for k in STATUS_KEYS},
-              "n_hadith_pages_cached": count_cached_pages(cache_root),
+              "n_hadith_pages_cached": len(cached) if cached is not None else None,
+              "six_books_cached_rate": six_books_cached_rate(tables["occurrences"], cached),
               **flatten(dating_m, "dating_")}
     tables["checks"] = pd.DataFrame([checks])
 
@@ -524,6 +610,7 @@ def build_release(data_dir: str | Path = "data", out: str | Path = "release_hf",
     for name, df in tables.items():
         check_columns(df, name)
         check_strings(df, name)
+        check_terms(df, name)
         df.to_parquet(out / "data" / f"{name}.parquet", index=False)
         manifest[name] = {"rows": int(len(df)), "columns": list(df.columns)}
     (out / "checks.json").write_text(json.dumps(checks, indent=2, ensure_ascii=False))
@@ -532,6 +619,7 @@ def build_release(data_dir: str | Path = "data", out: str | Path = "release_hf",
     ctx["configs_yaml"] = _configs_yaml(list(manifest))
     ctx["version"] = VERSION
     ctx["bounded_width"] = dating.BOUNDED_WIDTH
+    ctx |= card_prose(checks)
     ctx["shawahid_note"] = shawahid_note or (
         "`companion_rawi_id` is the Companion resolved from the site's shawahid narrator name; "
         "it is null where the name could not be resolved.")
@@ -554,6 +642,7 @@ def verify_release(out: str | Path) -> list[str]:
         df = pd.read_parquet(out / f)
         check_columns(df, f)
         check_strings(df, f)
+        check_terms(df, f)
     missing = [c for c in REQUIRED_CONFIGS if f"data/{c}.parquet" not in files]
     if missing or "README.md" not in files:
         raise ValueError(f"release incomplete: missing {missing or 'README.md'}")

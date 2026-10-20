@@ -108,7 +108,9 @@ def test_rates_by_depth():
     stats: dict = {}
     e = edits_table(_segments(), _occ(), CHAINS, stats=stats)
     assert stats["carriers_without_chain"] == 0
-    r = edit_rates(e, {"g": [c for h in (1, 2, 3, 77) for c in CHAINS.get(h, [])]})
+    # group "other" has no attributed/ambiguous row: its chains must not enter the denominator
+    r = edit_rates(e, {"g": [c for h in (1, 2, 3, 77) for c in CHAINS.get(h, [])],
+                       "other": [[1, 2, 3, 10], [1, 5, 6, 7, 8]]})
     assert list(r.columns) == ["depth", "n_transmissions", "n_edits", "rate", "n_edits_nonleaf",
                                "rate_nonleaf"]
     assert list(r.depth) == [0, 1, 2, 3]
@@ -140,6 +142,8 @@ def test_partial_and_unattributed_rows_excluded_from_rates():
     assert stats["carriers_without_chain"] == 2 and stats["carrier_refs_without_chain"] == 3
     r = edit_rates(e, {"g": [c for cs in CHAINS.values() for c in cs]})
     assert r.n_edits.sum() == 0 and r.n_edits_nonleaf.sum() == 0
+    # no rated row in the group: its transmissions are not counted either
+    assert r.n_transmissions.sum() == 0 and list(r.depth) == [0]
     assert r.depth[0] == 0 and r.n_transmissions[0] == 0 and r.rate[0] is pd.NA
 
 

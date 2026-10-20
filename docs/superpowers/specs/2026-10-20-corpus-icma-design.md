@@ -12,13 +12,14 @@ Decisions: alignment source = the site's precomputed variant segments, verified 
 groups.parquet        group_id (tk-N), n_entries, n_chains, books[]
 occurrences.parquet   group_id, hadith_id, book_slug, numbering
 chains.parquet        hadith_id, chain_no, position, rawi_id, term           (ح-transfers split into separate chains)
-segments.parquet      group_id, seg_no, kind(base|substitution), base_text_hash, variant_text_hash, carrier_hadith_ids[]
+segments.parquet      group_id, seg_no, kind(base|substitution), base_hash, variant_hash, carrier_hadith_ids[]
 shawahid.parquet      group_id, companion_rawi_id, hadith_ids[]
 rawi_dates_inferred   rawi_id, death_lo, death_hi, death_mode, birth_lo, birth_hi, support, method
 tree_nodes.parquet    group_id, rawi_id, depth, k_branches, n_descendant_chains, is_cl_k2, is_cl_k3
 report_dates.parquet  group_id, cl_k2_id, cl_k2_date_lo, cl_k2_date_hi, cl_k3_id, cl_k3_date_lo, cl_k3_date_hi, earliest_text_hash, complete
 edits.parquet         group_id, seg_no, introduced_by_rawi_id, generation_depth, edit_type(sub|ins|del)
 ```
+`earliest_text_hash` deferred to v0.2 (not computed in v0.1).
 Text (matn, segment text) lives only in a gitignored local `text/` store; released tables carry hashes (sha256 of normalised text) and ids. Source fields: `takhrij.sources[].occurrences[].entry_id`, `takhrij_isnad_summary.group_slug` (tk-N), `variants.segments[] {kind, text|surface_text, hids}`, `composite_matn`, `shawahid.groups[]`, `isnad[]` + `isnad_html` (transfer markers), `similars`.
 
 ## 3. Algorithms
