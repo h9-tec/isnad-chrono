@@ -21,7 +21,8 @@ _DROP = {"بن", "عن"}
 # They never count as name overlap on their own (see _score).
 _PARTICLES = frozenset({"ابن", "ابو", "ام"})
 # Quote markers of a hadith-specific statement ("did not hear THIS hadith from him").
-_SPECIFIC = re.compile("|".join(_norm(x) for x in (
+# Each marker is whole-word bounded: "الحديث عنه في" and "حديث الزهري فيه" stay pair-level.
+_SPECIFIC = re.compile("|".join(rf"(?<!\w)(?:{_norm(x)})(?!\w)" for x in (
     # "حديث <1-3 words> في": a named hadith ("حديث خزيمه بن ثابت في المسح"); "حديثه عن X"
     # (his hadith from X in general) has no space after حديث and stays pair-level.
     "هذا الحديث", "هذه الاحاديث", r"حديث(?: [^ ]+){1,3} في", "حديثه هذا", "هذا الخبر",

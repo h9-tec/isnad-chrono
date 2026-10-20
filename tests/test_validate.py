@@ -126,3 +126,14 @@ def test_validate_cli_writes_outputs(tmp_path):
     assert (tmp_path / "m.json").exists()
     assert (tmp_path / "fig" / "p_meet_marasil_no_idrak.png").exists()
     assert (tmp_path / "fig" / "verdicts_by_book.png").exists()
+
+
+def test_specific_scope_rows_are_not_negatives():
+    sc = _scores([{"hadith_id": 1, "p_meet": 0.9}])
+    den = pd.DataFrame({"student_id": [3, 3], "teacher_id": pd.array([1, 4], dtype="Int64"),
+                        "relation": ["no_sama", "no_sama"], "resolved": [True, True],
+                        "ambiguous": [False, False], "relation_scope": ["pair", "specific"]})
+    neg = validate.negatives(den, _rawi4(), relation="no_sama")
+    assert list(neg["teacher_id"]) == [1]
+    m = validate.metrics(sc, {"tuhfa": den}, _rawi4(), _hadith())
+    assert m["negatives"]["tuhfa"]["no_sama"]["n"] == 1

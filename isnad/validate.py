@@ -39,12 +39,16 @@ def negatives(denials: pd.DataFrame, rawi: pd.DataFrame, relation: str | None = 
     """Resolved, unambiguous pairs (one row per student, teacher, relation) with p_meet.
 
     `relation` selects one relation; None keeps every denial relation. `sama` rows are never
-    negatives: they are attestations of hearing (see `sama_attested`).
+    negatives: they are attestations of hearing (see `sama_attested`). With a
+    `relation_scope` column only "pair" rows count; hadith-specific rows are dropped.
     """
     if denials is None or len(denials) == 0:
         return pd.DataFrame(columns=_NEG_COLS)
     keep = {relation} if relation is not None else set(NEG_RELATIONS)
-    return _pairs(denials[denials["relation"].isin(keep)], rawi)
+    d = denials[denials["relation"].isin(keep)]
+    if "relation_scope" in d:  # hadith-specific statements are not pair-level denials
+        d = d[d["relation_scope"] == "pair"]
+    return _pairs(d, rawi)
 
 
 def sama_attested(denials: pd.DataFrame, rawi: pd.DataFrame) -> pd.DataFrame:

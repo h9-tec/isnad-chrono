@@ -240,6 +240,12 @@ def test_specific_scope_excluded(tmp_path):
     assert gold.relation_scope("لم يسمع من أبيه حديث بسرة في مس الذكر") == "specific"
     assert gold.relation_scope("من أبي عبد الله الجدلي حديث خزيمة بن ثابت في المسح") == "specific"
     assert gold.relation_scope("حديثه عن علي في الجملة مرسل") == "pair"
+    assert gold.relation_scope("حديث الزهري فيه ارسال") == "pair"
+    assert gold.relation_scope("وروى الحديث عنه في الجمله") == "pair"
+    for q in ("لم يسمع هذا الحديث منه", "هذه الأحاديث لم يسمعها", "حديثه هذا مرسل",
+              "الحديث الذي رواه عنه", "قال في هذا الحديث مرسل", "هذا الخبر مرسل",
+              "لم يسمع من أبيه حديث بسرة في مس الذكر"):
+        assert gold.relation_scope(q) == "specific", q
     assert gold.relation_scope(None) == "pair"
 
 
