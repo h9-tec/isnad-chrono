@@ -1,4 +1,7 @@
-"""CLI: python -m isnad.cli <fetch|build|chains|groups|dating|tree|edits|gold|score|validate|report|export> ..."""
+"""CLI: python -m isnad.cli <command> ...
+
+Commands: fetch build chains groups dating tree edits gold score validate report export export-hf
+"""
 
 import argparse
 
@@ -99,7 +102,36 @@ def main(argv=None) -> None:
     ep = top.add_parser("export")
     ep.add_argument("--data-dir", default="data")
     ep.add_argument("--out", default="release")
+    hp = top.add_parser("export-hf", help="HF release: configs, checks, dataset card [push]")
+    hp.add_argument("--data-dir", default="data")
+    hp.add_argument("--out", default="release_hf")
+    hp.add_argument("--input", action="append", default=[], metavar="KEY=PATH",
+                    help="override one input path (keys: export_hf.INPUTS)")
+    hp.add_argument("--cache-root", default="data/raw/html",
+                    help="cached pages, read for the carriers' matn in the alignment check")
+    hp.add_argument("--align-sample", type=int, default=None)
+    hp.add_argument("--push", action="store_true")
+    hp.add_argument("--repo-id", default=None)
+    hp.add_argument("--private", action="store_true")
+    hp.add_argument("--env-file", default="~/.config/isnad-chrono/.env",
+                    help="file with a HF_TOKEN=... line")
     args = ap.parse_args(argv)
+
+    if args.cmd == "export-hf":
+        from isnad import export_hf
+        overrides = dict(kv.split("=", 1) for kv in args.input)
+        kw = {} if args.align_sample is None else {"align_sample": args.align_sample}
+        man = export_hf.build_release(args.data_dir, args.out, inputs=overrides,
+                                      matns=export_hf.matn_loader(args.cache_root), **kw)
+        for name, info in man.items():
+            print(name, info["rows"], "rows")
+        if args.push:
+            token = export_hf.read_token(args.env_file)
+            if not token:
+                raise SystemExit(f"no HF_TOKEN in {args.env_file}")
+            print("pushed:", export_hf.push(args.out, args.repo_id or export_hf.REPO_ID, token,
+                                            private=args.private))
+        return
 
     if args.cmd == "export":
         from isnad import export

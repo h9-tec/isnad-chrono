@@ -82,3 +82,6 @@ BIRTH_LO = YEAR_LO - AGE_MAX
 
 # Common links (isnad.tree): branch thresholds k for the k-common-link of a merged chain tree
 K_CL = (2, 3)
+
+# Release checks (isnad.export_hf): groups re-aligned with difflib to verify the site's segments
+ALIGN_SAMPLE = 500
