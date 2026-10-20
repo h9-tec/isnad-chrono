@@ -1,9 +1,12 @@
+from collections import Counter
+
 import pandas as pd
 
 from isnad.build import read_page
 from isnad.chains import Chain, Link, build_chains, chains_table, hadith_chains, tokenize
 from isnad.cli import main
 from isnad.pageprops import extract
+from isnad.score import classify_term
 from tests.conftest import FIXTURES
 
 BUKHARI_10 = [
@@ -182,3 +185,97 @@ def test_placeholder_kept_when_flat_is_ambiguous():
     html = _f("حدثنا") + _r(8) + _f("حدثنا") + _r(1) + _f("عن") + _r(5)
     flat = [{"slug": f"p-{i}"} for i in (5, 6, 4, 8, 77)]  # two narrators between 5 and 8
     assert paths(hadith_chains({"isnad_html": html, "isnad": flat})) == [(5, 1, 8, 77)]
+
+
+# --- fixes: truncated chains, implicit transfers, variant cap -----------------------------
+
+def _flat(*pairs):
+    return [{"slug": f"p-{i}", "formula": f} for i, f in pairs]
+
+
+def test_truncated_chain_completed_from_flat():
+    # html stops at 5 (X); the flat isnad has two earlier narrators, 3 and 4
+    html = _f("حدثنا") + _r(8) + _f("عن") + _r(5)
+    h = {"isnad_html": html, "isnad": _flat((3, "عن"), (4, "أخبرنا"), (5, "عن"), (8, "حدثنا"),
+                                             (77, None))}
+    stats = Counter()
+    ch = hadith_chains(h, stats)
+    assert [(link.rawi_id, link.term) for link in ch[0].links] == [
+        (3, "عن"), (4, "أخبرنا"), (5, "عن"), (8, "حدثنا"), (77, None)]
+    assert [link.position for link in ch[0].links] == [0, 1, 2, 3, 4]
+    assert ch[0].source == "html+flat"
+    assert stats["truncated completed"] == 1 and stats["truncated_unmatched"] == 0
+
+
+def test_truncated_chain_unmatched_left_as_is():
+    html = _f("حدثنا") + _r(8) + _f("عن") + _r(9)
+    h = {"isnad_html": html, "isnad": _flat((3, "عن"), (5, "عن"), (8, "حدثنا"), (77, None))}
+    stats = Counter()
+    ch = hadith_chains(h, stats)
+    assert paths(ch) == [(9, 8, 77)] and ch[0].source == "html"
+    assert stats["truncated_unmatched"] == 1
+
+
+def test_complete_chain_not_marked(fx_gz):
+    h = hadith(fx_gz("hadith_tirmidhi_100144_tahwil.html.gz"))
+    assert {c.source for c in hadith_chains(h)} == {"html"}
+
+
+def test_chain_terms_classify_with_hamza(fx_gz):
+    ch = build_chains(tokenize(isnad_html(fx_gz("hadith_bukhari_10_tahwil.html.gz"))), 5495)
+    assert classify_term("أخبرنا") == "explicit" and classify_term("أخبرني") == "explicit"
+    terms = {link.term for c in ch for link in c.links if link.term}
+    assert {t: classify_term(t) for t in terms} == {
+        "حدثنا": "explicit", "أخبرنا": "explicit", "أخبرني": "explicit", "عن": "ambiguous"}
+
+
+def test_implicit_transfer_on_waw_formula():
+    html = (_f("حَدَّثَنَا") + _r(10) + _f("عَنْ") + _r(20) + "، " + _f("وَحَدَّثَنَا") + _r(30)
+            + _f("عَنْ") + _r(20) + _f("عَنْ") + _r(40))
+    toks = tokenize(html)
+    assert [t for t in toks if t[0] == "H"] == [("H", "و")]
+    assert paths(build_chains(toks, 7)) == [(40, 20, 10, 7), (40, 20, 30, 7)]
+
+
+def test_waw_formula_as_first_token_or_after_ha_is_not_extra_transfer(fx_gz):
+    assert tokenize(_f("وَحَدَّثَنَا") + _r(1))[0] == ("F", "وحدثنا")
+    toks = tokenize(isnad_html(fx_gz("hadith_bukhari_10_tahwil.html.gz")))
+    assert [t for t in toks if t[0] == "H"] == [("H",)]
+
+
+def test_join_phrase_joins_open_segments():
+    html = (_f("حدثنا") + _r(1) + " ح " + _f("وحدثنا") + _r(2) + "، كِلَاهُمَا " + _f("عَنْ")
+            + _r(3) + _f("عن") + _r(4))
+    toks = tokenize(html)
+    assert ("J",) in toks
+    ch = build_chains(toks, 7)
+    assert paths(ch) == [(4, 3, 1, 7), (4, 3, 2, 7)]
+    assert not any(c.unjoined for c in ch)
+
+
+def test_muslim_12688_kilahuma(fx_gz):
+    # حدثنا قتيبة، حدثنا عبد العزيز. وقال قتيبة: حدثنا يعقوب، كلاهما عن أبي حازم، عن سهل
+    h = hadith(fx_gz("hadith_muslim_12688_kilahuma.html.gz"))
+    ch = hadith_chains(h)
+    assert sorted((tuple((link.rawi_id, link.term) for link in c.links), c.unjoined) for c in ch) == [
+        (((2676, "عن"), (2521, "عن"), (3465, "حدثنا"), (5187, "حدثنا"), (6116, None)), False),
+        (((2676, "عن"), (2521, "عن"), (7159, "حدثنا"), (5187, "حدثنا"), (6116, None)), False)]
+
+
+def test_restart_with_unknown_name_is_ignored():
+    html = _f("حدثنا") + _r(1) + " وَقَالَ زَيْدٌ : " + _f("حدثنا") + _r(2)
+    assert paths(build_chains(tokenize(html), 7)) == [(2, 1, 7)]
+
+
+def test_variants_capped_at_64():
+    toks = []
+    for k in range(7):  # 7 levels of two parallel narrators -> 128 variants
+        toks += [("F", "عن"), ("R", 100 + k, ""), ("R", 200 + k, "")]
+    stats = Counter()
+    ch = build_chains(toks, 7, stats)
+    assert len(ch) == 64 and stats["capped hadith"] == 1
+
+
+def test_chain_without_compiler_kept():
+    h = {"isnad_html": _f("حدثنا") + _r(8) + _f("عن") + _r(5), "isnad": []}
+    assert paths(hadith_chains(h)) == [(5, 8)]
