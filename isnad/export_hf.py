@@ -22,6 +22,7 @@ from collections import Counter
 from pathlib import Path
 from typing import Callable, Iterable
 
+import numpy as np
 import pandas as pd
 
 from isnad import chains as chains_mod
@@ -61,7 +62,13 @@ INPUTS = {
 }
 
 NARRATOR_COLS = ["rawi_id", "generation_num", "death_year", "death_kind", "birth_year",
-                 "birth_kind", "death_lo", "death_hi", "birth_lo", "birth_hi", "support", "method"]
+                 "birth_kind", "death_lo", "death_hi", "death_mode", "birth_lo", "birth_hi",
+                 "support", "method"]
+EDGE_SCORE_COLS = ["teacher_id", "student_id", "hadith_id", "position", "term", "chain_type",
+                   "entry_kind", "p_meet", "how", "conflict_t", "conflict_s", "confirmed",
+                   "explicit_term", "ambiguous_term", "denied", "irsal", "tadlis", "verdict"]
+EDIT_RATE_COLS = ["depth", "n_transmissions", "n_edits", "rate", "n_edits_nonleaf",
+                  "rate_nonleaf"]
 # config -> (input key, columns; None = every column of the input)
 _TABLES = {
     "chains": ("chains", chains_mod.COLUMNS),
@@ -70,17 +77,23 @@ _TABLES = {
     "tree_nodes": ("tree_nodes", tree._NODE_COLS),
     "report_dates": ("report_dates", tree._REPORT_COLS),
     "edits": ("edits", edits.EDIT_COLS),
-    "edge_scores": ("edge_scores", None),
+    "edge_scores": ("edge_scores", EDGE_SCORE_COLS),
 }
 # written when the input exists; ids and hashes only (shawahid loses companion_name)
 _OPTIONAL = {
     "segments": ("segments", SCHEMAS["segments"].names),
     "shawahid": ("shawahid", ["group_id", "companion_rawi_id", "hadith_ids"]),
     "shawahid_companions": ("shawahid_companions", ["group_id", "hadith_id", "companion_rawi_id"]),
-    "edit_rates": ("edit_rates", None),
+    "edit_rates": ("edit_rates", EDIT_RATE_COLS),
     "dropped_links": ("dropped", dating.DROPPED_COLS),
 }
 REQUIRED_CONFIGS = ["narrators", *_TABLES, "checks"]
+RELEASE_FILES = frozenset({"README.md", "checks.json", "MANIFEST.json"}
+                          | {f"data/{c}.parquet" for c in [*REQUIRED_CONFIGS, *_OPTIONAL]})
+# push refuses a release whose headline checks are null
+PUSH_REQUIRED_CHECKS = ("alignment_agreement", "alignment_surface_found_rate",
+                        "sanity_n_dropped_links")
+REPO_ROOT = Path(__file__).resolve().parent.parent
 
 _WS = re.compile(r"\s+")
 _NONWORD = re.compile(r"[^\w]+")
@@ -241,23 +254,47 @@ def build_trees(chains_by_hadith: dict[int, list[list[int]]], occurrences: pd.Da
             for g, hs in hids.items()}
 
 
+def _dated(dates: pd.DataFrame | None) -> tuple[dict, dict]:
+    """rawi_id -> death_lo / death_hi for narrators with a usable (not prior-only) interval."""
+    if dates is None or dates.empty:
+        return {}, {}
+    d = dates.dropna(subset=["death_lo", "death_hi"])
+    if "method" in d:
+        d = d[d["method"] != "prior_only"]
+    return dict(zip(d.rawi_id, d.death_lo)), dict(zip(d.rawi_id, d.death_hi))
+
+
 def sanity_checks(trees: dict[str, tree.Tree], chains: pd.DataFrame,
-                  dropped: pd.DataFrame | None = None) -> dict:
-    """Tree sanity per root component: compilers (chain terminals) without children, roots
-    without a parent; chain counts; dropped (negative-cycle) links."""
+                  dropped: pd.DataFrame | None = None, dates: pd.DataFrame | None = None
+                  ) -> dict:
+    """Tree sanity per root component.
+
+    * compilers (chain terminals) without children in their component;
+    * roots without a parent in the GROUP graph (a root that another chain of the group places
+      below some narrator, e.g. Companion A <- Companion B, counts as having a parent);
+    * root earliest (spec 3.6): the root's inferred death_lo <= the death_hi of every dated
+      terminal of its component; components with an undated root or no dated terminal other
+      than the root are skipped (prior-only intervals count as undated);
+    * chain counts and dropped (negative-cycle) links.
+    """
+    lo, hi = _dated(dates)
     st: Counter = Counter()
     for t in trees.values():
         if not t.roots:
             st["trees_empty"] += 1
             continue
         st["trees"] += 1
+        has_parent = {c for cs in t.children.values() for c in cs}
         for r in t.roots:
             comp = t.component(r)
             st["components"] += 1
-            has_parent = {c for cs in comp.children.values() for c in cs}
             st["compilers"] += len(comp.terminals)
             st["compilers_nonleaf"] += sum(1 for n in comp.terminals if comp.children.get(n))
             st["roots_with_parent"] += r in has_parent
+            term_hi = [hi[n] for n in comp.terminals if n != r and n in hi]
+            if r in lo and term_hi:
+                st["root_date_checked"] += 1
+                st["root_date_ok"] += lo[r] <= min(term_hi)
     keys = chains[["hadith_id", "chain_no"]].drop_duplicates()
     unjoined = chains.loc[chains.unjoined, ["hadith_id", "chain_no"]].drop_duplicates()
     comp_n, comp_ = st["compilers"], st["components"]
@@ -267,6 +304,9 @@ def sanity_checks(trees: dict[str, tree.Tree], chains: pd.DataFrame,
         "compiler_leaf_rate": (1 - st["compilers_nonleaf"] / comp_n) if comp_n else None,
         "n_roots_with_parent": st["roots_with_parent"],
         "root_no_parent_rate": (1 - st["roots_with_parent"] / comp_) if comp_ else None,
+        "n_root_date_checked": st["root_date_checked"],
+        "root_earliest_rate": (st["root_date_ok"] / st["root_date_checked"]
+                               if st["root_date_checked"] else None),
         "n_chains": int(len(keys)), "n_chains_unjoined": int(len(unjoined)),
         "n_hadith_with_chain": int(keys.hadith_id.nunique()),
         "n_dropped_links": None if dropped is None else int(len(dropped)),
@@ -316,12 +356,21 @@ def flatten(d: dict, prefix: str = "", skip=("per_fold", "seconds")) -> dict:
     return out
 
 
+def _max_str(x) -> int:
+    if isinstance(x, str):
+        return len(x)
+    if isinstance(x, (list, tuple, np.ndarray)):
+        return max((len(v) for v in x if isinstance(v, str)), default=0)
+    return 0
+
+
 def check_strings(df: pd.DataFrame, label: str, max_len: int = MAX_STR_LEN) -> None:
-    """Reject any scalar string cell longer than max_len (text leaking under another name)."""
+    """Reject any string cell, or string item of a list cell, longer than max_len (text leaking
+    under another name)."""
     for c in df.columns:
         s = df[c]
         if s.dtype == object or pd.api.types.is_string_dtype(s):
-            ln = s.map(lambda x: len(x) if isinstance(x, str) else 0)
+            ln = s.map(_max_str)
             if len(ln) and ln.max() > max_len:
                 raise ValueError(f"{label}.{c}: string cell longer than {max_len} chars")
 
@@ -338,7 +387,8 @@ def _select(df: pd.DataFrame, cols: list[str] | None, label: str) -> pd.DataFram
 def narrators_table(rawi: pd.DataFrame, dates: pd.DataFrame) -> pd.DataFrame:
     base = rawi[["rawi_id", "generation_num", "death_year", "death_kind", "birth_year",
                  "birth_kind"]]
-    iv = dates[["rawi_id", "death_lo", "death_hi", "birth_lo", "birth_hi", "support", "method"]]
+    iv = dates[["rawi_id", "death_lo", "death_hi", "death_mode", "birth_lo", "birth_hi", "support",
+                "method"]]
     out = base.merge(iv, on="rawi_id", how="outer").sort_values("rawi_id", ignore_index=True)
     return out[NARRATOR_COLS]
 
@@ -375,12 +425,28 @@ def _paths(data_dir, overrides: dict | None) -> dict[str, Path]:
     return p
 
 
+def guard_out(out: str | Path, data_dir: str | Path, inputs: Iterable[Path] = ()) -> Path:
+    """Refuse an output folder whose deletion could destroy data: data_dir or an ancestor, the
+    repo root or the cwd or an ancestor of them, a folder holding any input, or an existing
+    non-empty folder that is not a previous release (no MANIFEST.json)."""
+    o = Path(out).resolve()
+    for name, q in [("data dir", Path(data_dir)), ("repo root", REPO_ROOT), ("cwd", Path.cwd()),
+                    *(("input", Path(i)) for i in inputs)]:
+        q = q.resolve()
+        if q == o or q.is_relative_to(o):
+            raise ValueError(f"refusing --out {out}: it is or contains the {name} {q}")
+    if o.exists() and (not o.is_dir() or (any(o.iterdir()) and not (o / "MANIFEST.json").exists())):
+        raise ValueError(f"refusing --out {out}: exists, non-empty and not a release folder")
+    return o
+
+
 def build_release(data_dir: str | Path = "data", out: str | Path = "release_hf",
                   inputs: dict | None = None, matns=None, align_sample: int = ALIGN_SAMPLE,
                   seed: int = 0, card: str | Path = CARD) -> Manifest:
     """Write the release folder; returns the manifest (config -> rows, columns)."""
     p = _paths(data_dir, inputs)
     out = Path(out)
+    guard_out(out, data_dir, p.values())
 
     def read(k, cols=None):
         if not p[k].exists():
@@ -399,7 +465,7 @@ def build_release(data_dir: str | Path = "data", out: str | Path = "release_hf",
 
     chains = tables["chains"]
     trees = build_trees(tree.load_chains(p["chains"]), tables["occurrences"])
-    sanity = sanity_checks(trees, chains, tables.get("dropped_links"))
+    sanity = sanity_checks(trees, chains, tables.get("dropped_links"), read("dates"))
     cov = coverage(tables, chains)
     if p["text"].exists() and p["segments"].exists():
         txt = read("text")
@@ -417,7 +483,8 @@ def build_release(data_dir: str | Path = "data", out: str | Path = "release_hf",
               **flatten(dating_m, "dating_")}
     tables["checks"] = pd.DataFrame([checks])
 
-    if out.exists():  # stale files must never ride along with an upload
+    if out.exists():  # stale files must never ride along with an upload (guarded above)
+        guard_out(out, data_dir, p.values())
         shutil.rmtree(out)
     (out / "data").mkdir(parents=True)
     manifest: Manifest = {}
@@ -438,15 +505,15 @@ def build_release(data_dir: str | Path = "data", out: str | Path = "release_hf",
 
 
 def verify_release(out: str | Path) -> list[str]:
-    """Only README.md, checks.json, MANIFEST.json and data/<config>.parquet; every parquet passes
-    the denylist and the string-length guard. Returns the relative file list."""
+    """Only README.md, checks.json, MANIFEST.json and data/<known config>.parquet; every parquet
+    passes the denylist and the string-length guard. Returns the relative file list."""
     out = Path(out)
     files = sorted(str(f.relative_to(out)) for f in out.rglob("*") if f.is_file())
     for f in files:
-        if f in ("README.md", "checks.json", "MANIFEST.json"):
-            continue
-        if not re.fullmatch(r"data/\w+\.parquet", f):
+        if f not in RELEASE_FILES:
             raise ValueError(f"unexpected file in release: {f}")
+        if not f.endswith(".parquet"):
+            continue
         df = pd.read_parquet(out / f)
         check_columns(df, f)
         check_strings(df, f)
@@ -476,8 +543,18 @@ def push(out: str | Path, repo_id: str = REPO_ID, token: str | None = None,
     from huggingface_hub import HfApi
 
     verify_release(out)
+    out = Path(out)
+    cj = out / "checks.json"
+    checks = json.loads(cj.read_text()) if cj.exists() else {}
+    null = [k for k in PUSH_REQUIRED_CHECKS if checks.get(k) is None]
+    if null:
+        raise ValueError(f"refusing push: checks {null} are null")
+    if "n/a" in (out / "README.md").read_text(encoding="utf-8"):
+        raise ValueError("refusing push: README.md has unfilled values (n/a)")
     api = HfApi(token=token)
     api.create_repo(repo_id, repo_type="dataset", exist_ok=True, private=private)
+    # files of the previous version that this one no longer has are removed from the repo
     api.upload_folder(repo_id=repo_id, folder_path=str(out), repo_type="dataset",
-                      commit_message=f"isnad-chrono {VERSION}")
+                      commit_message=f"isnad-chrono {VERSION}",
+                      delete_patterns=["data/*.parquet", "*.json", "README.md"])
     return f"https://huggingface.co/datasets/{repo_id}"

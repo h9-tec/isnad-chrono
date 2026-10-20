@@ -12,6 +12,13 @@ from isnad import build, fetch
 DB = "data/queue.sqlite"
 
 
+def _key_path(s: str) -> tuple[str, str]:
+    k, sep, v = s.partition("=")
+    if not sep or not k or not v:
+        raise argparse.ArgumentTypeError(f"expected KEY=PATH, got {s!r}")
+    return k, v
+
+
 def main(argv=None) -> None:
     ap = argparse.ArgumentParser(prog="isnad")
     ap.add_argument("--db", default=DB)
@@ -105,7 +112,7 @@ def main(argv=None) -> None:
     hp = top.add_parser("export-hf", help="HF release: configs, checks, dataset card [push]")
     hp.add_argument("--data-dir", default="data")
     hp.add_argument("--out", default="release_hf")
-    hp.add_argument("--input", action="append", default=[], metavar="KEY=PATH",
+    hp.add_argument("--input", action="append", default=[], metavar="KEY=PATH", type=_key_path,
                     help="override one input path (keys: export_hf.INPUTS)")
     hp.add_argument("--cache-root", default="data/raw/html",
                     help="cached pages, read for the carriers' matn in the alignment check")
@@ -119,16 +126,18 @@ def main(argv=None) -> None:
 
     if args.cmd == "export-hf":
         from isnad import export_hf
-        overrides = dict(kv.split("=", 1) for kv in args.input)
+        token = None
+        if args.push:  # fail fast, before the build
+            token = export_hf.read_token(args.env_file)
+            if not token:
+                raise SystemExit(f"no HF_TOKEN in {args.env_file}")
+        overrides = dict(args.input)
         kw = {} if args.align_sample is None else {"align_sample": args.align_sample}
         man = export_hf.build_release(args.data_dir, args.out, inputs=overrides,
                                       matns=export_hf.matn_loader(args.cache_root), **kw)
         for name, info in man.items():
             print(name, info["rows"], "rows")
         if args.push:
-            token = export_hf.read_token(args.env_file)
-            if not token:
-                raise SystemExit(f"no HF_TOKEN in {args.env_file}")
             print("pushed:", export_hf.push(args.out, args.repo_id or export_hf.REPO_ID, token,
                                             private=args.private))
         return

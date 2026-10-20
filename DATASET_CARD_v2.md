@@ -126,7 +126,9 @@ Computed when the release is built and shipped in the `checks` config and `check
 - Dropped links (negative cycles): {{sanity_n_dropped_links}}.
 - Tree sanity: compilers that are leaves {{sanity_compiler_leaf_rate}} ({{sanity_n_compilers_nonleaf}} of
   {{sanity_n_compilers}} compilers also narrate inside another chain of the same component); roots
-  without a parent {{sanity_root_no_parent_rate}}.
+  without a parent in the group graph {{sanity_root_no_parent_rate}}; root death interval starting no
+  later than every dated compiler's ends (spec "root earliest") {{sanity_root_earliest_rate}} of
+  {{sanity_n_root_date_checked}} dated components.
 - Coverage: {{sanity_n_chains}} chains ({{sanity_n_chains_unjoined}} unjoined); occurrences with a parsed
   chain {{coverage_occurrences_with_chain_rate}}; complete groups {{coverage_groups_complete_rate}};
   groups with a k=2 common link {{coverage_groups_cl_k2_rate}} (dated {{coverage_groups_cl_k2_dated_rate}});
@@ -148,6 +150,8 @@ Computed when the release is built and shipped in the `checks` config and `check
   (`has_tahwil_carrier`) for sensitivity analysis. Edit rates are edits per transmission, not
   probabilities.
 - Chronology and common-link results are not authenticity verdicts.
+- Text hashes hide the text but are not a secrecy mechanism: a short segment (one or two words)
+  can be confirmed by hashing candidate wordings.
 
 ## Source and license
 

@@ -8,7 +8,7 @@ import pandas as pd
 
 DENYLIST = (r"^(name|abbrev|kunya|lineage|statement|content|matn|fullname|quote|teacher|student"
             r"|scholar)$|_text$|_name$|^narrative_years$|^name_forms$|^grading_json$|^book_title$"
-            r"|^number$")
+            r"|^number$|^text$|^surface$|^wording$|variant_text|^words?$")
 EDGE_COLS = ["teacher_id", "student_id", "hadith_id", "position", "term", "chain_type",
              "entry_kind"]
 RAWI_COLS = ["rawi_id", "generation_num", "death_year", "death_sd", "death_kind", "birth_year",
